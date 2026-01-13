@@ -51,7 +51,15 @@ def parse_args():
         "--limit",
         type=int,
         default=0,
-        help="If >0, only run the first N examples (applies to both train and test).",
+        help="(Deprecated) If >0, only run the first N examples (applies to both train and test).",
+    )
+    parser.add_argument("--train_limit", type=int, default=0, help="If >0, only run the first N training examples.")
+    parser.add_argument("--test_limit", type=int, default=0, help="If >0, only run the first N test examples.")
+    parser.add_argument(
+        "--checkpoint",
+        type=str,
+        default="",
+        help="Optional path to a router .pth checkpoint to load before training/testing.",
     )
     parser.add_argument('--lr', type=float, default=0.01,help="learning rate")
     parser.add_argument('--batch_size', type=int, default=16,help="batch size")
@@ -74,9 +82,17 @@ if __name__ == '__main__':
     train_dataset = MbppDataset('train')
     test_dataset = MbppDataset('test')
 
+    # Backwards compatible: `--limit` applies to both unless overridden.
     if args.limit and args.limit > 0:
-        train_dataset.df = train_dataset.df.iloc[: args.limit].reset_index(drop=True)
-        test_dataset.df = test_dataset.df.iloc[: args.limit].reset_index(drop=True)
+        if not args.train_limit:
+            args.train_limit = args.limit
+        if not args.test_limit:
+            args.test_limit = args.limit
+
+    if args.train_limit and args.train_limit > 0:
+        train_dataset.df = train_dataset.df.iloc[: args.train_limit].reset_index(drop=True)
+    if args.test_limit and args.test_limit > 0:
+        test_dataset.df = test_dataset.df.iloc[: args.test_limit].reset_index(drop=True)
 
     current_time = time.strftime("%Y-%m-%d-%H-%M-%S", time.localtime())
     log_file = f"mbpp_{current_time}.txt"
@@ -84,6 +100,8 @@ if __name__ == '__main__':
 
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     router = MasRouter(max_agent=args.max_agent,device=device).to(device)
+    if args.checkpoint:
+        router.load_state_dict(torch.load(args.checkpoint, map_location=device))
     optimizer = torch.optim.Adam(router.parameters(), lr=args.lr)
     tasks = tasks_profile
     llms = llm_profile

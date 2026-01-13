@@ -4,6 +4,7 @@ from abc import ABC
 import numpy as np
 import torch
 import asyncio
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from MAR.Graph.node import Node
 from MAR.Utils.utils import find_mode
@@ -236,21 +237,36 @@ class Graph(ABC):
             zero_in_degree_queue = [node_id for node_id, deg in in_degree.items() if deg == 0]
             
             while zero_in_degree_queue:
-                current_node_id = zero_in_degree_queue.pop(0)
-                tries = 0
-                while tries < max_tries:
-                    try:
-                        self.nodes[current_node_id].execute(inputs) # output is saved in the node.outputs
-                        break
-                    except Exception as e:
-                        print(f"Error during execution of node {current_node_id}: {e}")
-                    tries += 1
-                for successor in self.nodes[current_node_id].spatial_successors:
-                    if successor.id not in self.nodes.keys():
-                        continue
-                    in_degree[successor.id] -= 1
-                    if in_degree[successor.id] == 0:
-                        zero_in_degree_queue.append(successor.id)
+                current_wave_ids = zero_in_degree_queue
+                zero_in_degree_queue = []
+
+                def run_node(node_id: str) -> None:
+                    tries = 0
+                    while tries < max_tries:
+                        try:
+                            self.nodes[node_id].execute(inputs)  # output is saved in the node.outputs
+                            return
+                        except Exception as e:
+                            print(f"Error during execution of node {node_id}: {e}")
+                        tries += 1
+
+                max_workers = len(current_wave_ids)
+                if max_workers <= 1:
+                    for node_id in current_wave_ids:
+                        run_node(node_id)
+                else:
+                    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                        futures = [executor.submit(run_node, node_id) for node_id in current_wave_ids]
+                        for future in as_completed(futures):
+                            future.result()
+
+                for node_id in current_wave_ids:
+                    for successor in self.nodes[node_id].spatial_successors:
+                        if successor.id not in self.nodes.keys():
+                            continue
+                        in_degree[successor.id] -= 1
+                        if in_degree[successor.id] == 0:
+                            zero_in_degree_queue.append(successor.id)
             self.update_memory()
             
         self.connect_decision_node()
