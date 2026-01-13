@@ -60,7 +60,13 @@ KEY = "" # the key for API
 
 ### 🖥️ Local vLLM model pool (optional)
 
-If you want to run a small open-source model pool locally (e.g., multiple vLLM OpenAI servers on different GPUs/ports), you can use the helper scripts in `scripts/vllm/` and configure `MODEL_BASE_URLS` (see `template.env`).
+If you want to run a small open-source model pool locally (e.g., multiple vLLM OpenAI servers on different GPUs/ports), you can use the helper scripts in `scripts/vllm/`.
+
+For convenience, MasRouter will automatically look for a per-model base URL mapping at:
+- `config_test.json` (recommended); or
+- `logs/vllm/model_base_urls.json` (written by `scripts/vllm/serve_pool.sh`).
+
+So you typically do **not** need to manually `export MODEL_BASE_URLS=...` for local testing.
 
 ### 🐹 Run the code
 
