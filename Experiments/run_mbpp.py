@@ -47,6 +47,12 @@ def parse_args():
     parser = argparse.ArgumentParser(description="AgentPrune Experiments on mbpp")
     parser.add_argument("--dataset_json", type=str, default="Datasets/mbpp/mbpp.jsonl")
     parser.add_argument("--result_file", type=str, default=None)
+    parser.add_argument(
+        "--limit",
+        type=int,
+        default=0,
+        help="If >0, only run the first N examples (applies to both train and test).",
+    )
     parser.add_argument('--lr', type=float, default=0.01,help="learning rate")
     parser.add_argument('--batch_size', type=int, default=16,help="batch size")
     parser.add_argument('--epochs', type=int, default=10, help="Default 10.")
@@ -67,6 +73,10 @@ if __name__ == '__main__':
     fix_random_seed(1234)
     train_dataset = MbppDataset('train')
     test_dataset = MbppDataset('test')
+
+    if args.limit and args.limit > 0:
+        train_dataset.df = train_dataset.df.iloc[: args.limit].reset_index(drop=True)
+        test_dataset.df = test_dataset.df.iloc[: args.limit].reset_index(drop=True)
 
     current_time = time.strftime("%Y-%m-%d-%H-%M-%S", time.localtime())
     log_file = f"mbpp_{current_time}.txt"
