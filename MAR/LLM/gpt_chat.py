@@ -4,7 +4,9 @@ from tenacity import retry, wait_random_exponential, stop_after_attempt
 from typing import Dict, Any
 from dotenv import load_dotenv
 import os
+import json
 import requests
+from functools import lru_cache
 from groq import Groq, AsyncGroq
 from openai import OpenAI, AsyncOpenAI
 
@@ -15,6 +17,55 @@ from MAR.LLM.llm_registry import LLMRegistry
 load_dotenv()
 MINE_BASE_URL = os.getenv('BASE_URL')
 MINE_API_KEYS = os.getenv('API_KEY')
+
+@lru_cache(maxsize=1)
+def _get_model_base_urls() -> Dict[str, str]:
+    """
+    Optional per-model base URL mapping for OpenAI-compatible backends.
+
+    Use cases:
+    - Run multiple vLLM OpenAI servers on different ports/GPUs.
+    - Keep a single client interface while routing by model name.
+
+    Configure via:
+    - `MODEL_BASE_URLS` as a JSON object string; or
+    - `MODEL_BASE_URLS` as a path to a JSON file on disk.
+
+    Example (env var):
+      MODEL_BASE_URLS='{"mistralai/Mistral-7B-Instruct-v0.3":"http://localhost:8003/v1"}'
+    """
+    raw = os.environ.get("MODEL_BASE_URLS", "").strip()
+    if not raw:
+        return {}
+
+    if raw.startswith("{"):
+        try:
+            data = json.loads(raw)
+        except json.JSONDecodeError:
+            return {}
+    else:
+        try:
+            with open(raw, "r", encoding="utf-8") as f:
+                data = json.load(f)
+        except OSError:
+            return {}
+        except json.JSONDecodeError:
+            return {}
+
+    if not isinstance(data, dict):
+        return {}
+
+    normalized: Dict[str, str] = {}
+    for key, value in data.items():
+        if isinstance(key, str) and isinstance(value, str) and value.strip():
+            normalized[key] = value.strip()
+    return normalized
+
+def _resolve_base_url(model_name: str) -> Optional[str]:
+    per_model = _get_model_base_urls()
+    if model_name in per_model:
+        return per_model[model_name]
+    return os.environ.get("URL")
 
 
 @LLMRegistry.register('ALLChat')
@@ -39,8 +90,10 @@ class ALLChat(LLM):
 
         if isinstance(messages, str):
             messages = [{'role':"user", 'content':messages}]
-        client = OpenAI(base_url = os.environ.get("URL"),
-                        api_key = os.environ.get("KEY"))
+        client = OpenAI(
+            base_url=_resolve_base_url(self.model_name),
+            api_key=os.environ.get("KEY") or "EMPTY",
+        )
         chat_completion = client.chat.completions.create(
         messages = messages,
         model = self.model_name,
@@ -68,8 +121,10 @@ class ALLChat(LLM):
         if isinstance(messages, str):
             messages = [{'role':"user", 'content':messages}]
         
-        client = AsyncOpenAI(base_url = os.environ.get("URL"),
-                             api_key = os.environ.get("KEY"),)
+        client = AsyncOpenAI(
+            base_url=_resolve_base_url(self.model_name),
+            api_key=os.environ.get("KEY") or "EMPTY",
+        )
         chat_completion = await client.chat.completions.create(
         messages = messages,
         model = self.model_name,

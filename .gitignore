@@ -5,6 +5,8 @@ Datasets/MMLU/*
 register/
 
 .env
+.venv/
+.python-version.local
 *.jsonl
 *.pth
 *.pyc

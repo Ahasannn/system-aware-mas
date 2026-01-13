@@ -15,7 +15,7 @@ from loguru import logger
 import torch.nn.functional as F
 
 from MAR.MasRouter.mas_router import MasRouter
-from MAR.LLM.llm_profile import llm_profile
+from MAR.LLM.llm_profile_test import llm_profile
 from MAR.Agent.reasoning_profile import reasoning_profile
 from MAR.Prompts.tasks_profile import tasks_profile
 from MAR.Tools.coding.python_executor import PyExecutor

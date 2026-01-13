@@ -20,6 +20,18 @@
 
 ## 🏃‍♂️‍➡️ Quick Start
 
+### 🧰 Environment (uv)
+
+This repo includes `pyproject.toml` + `uv.lock` for a reproducible setup. Recommended Python is 3.11 (see `.python-version`).
+
+```bash
+uv venv --python 3.11
+source .venv/bin/activate
+uv sync --frozen
+# Optional (for local vLLM serving):
+# uv sync --frozen --extra serve
+```
+
 ### 📊 Datasets
 
 Please download the  `GSM8K`,  `HumanEval`, `MATH`, `MBPP`, `MMLU` datasets and place it in the `Datasets` folder. The file structure should be organized as follows:
@@ -45,6 +57,10 @@ Add API keys in `template.env` and change its name to `.env`. We recommend that 
 URL = "" # the URL of LLM backend
 KEY = "" # the key for API
 ```
+
+### 🖥️ Local vLLM model pool (optional)
+
+If you want to run a small open-source model pool locally (e.g., multiple vLLM OpenAI servers on different GPUs/ports), you can use the helper scripts in `scripts/vllm/` and configure `MODEL_BASE_URLS` (see `template.env`).
 
 ### 🐹 Run the code
 
