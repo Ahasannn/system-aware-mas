@@ -1,6 +1,7 @@
 from typing import List, Dict, Optional
 import os
 import json
+import uuid
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -11,6 +12,7 @@ from MAR.LLM.llm_embedding import SentenceEncoder
 from MAR.Graph.graph import Graph
 from MAR.Utils.utils import get_kwargs, plot_embedding_heatmap, plot_row_similarity
 from MAR.Utils.globals import Cost
+from MAR.Utils.telemetry import CsvTelemetryWriter, GraphTrace
 from loguru import logger
 
 class GFusion(nn.Module):
@@ -101,7 +103,13 @@ class MasRouter(nn.Module):
 
     def forward(self, queries:List[str], tasks:List[Dict[str, str]], 
                 llms: List[Dict[str, str]], collabs:List[Dict[str, str]], given_task: Optional[List[int]] = None, 
-                prompt_file:str='MAR/Roles/FinalNode/gsm8k.json'):
+                prompt_file:str='MAR/Roles/FinalNode/gsm8k.json',
+                telemetry_path: Optional[str] = None,
+                item_ids: Optional[List[object]] = None,
+                dataset: Optional[str] = None,
+                split: Optional[str] = None,
+                batch_id: Optional[int] = None,
+                run_id: Optional[str] = None):
         """
         queries:List[Dict[str, str]]: List of queries
         tasks:List[Dict[str, str]]: List of tasks
@@ -146,22 +154,131 @@ class MasRouter(nn.Module):
 
         final_result = []
         costs = []
-        for query, task, llms, collab, roles in zip(queries, selected_tasks, selected_llms, selected_collabs, selected_roles):
+        telemetry_writer = CsvTelemetryWriter(telemetry_path) if telemetry_path else None
+        run_id = run_id or uuid.uuid4().hex[:8]
+        for i, (query, task, llms, collab, roles) in enumerate(
+            zip(queries, selected_tasks, selected_llms, selected_collabs, selected_roles)
+        ):
             previous_cost = Cost.instance().value
             kwargs = get_kwargs(collab['Name'], len(llms))
             llm_names = [llm['Name'] for llm in llms]
             role_names = [role['Name'] for role in roles]
+            item_id = ""
+            if item_ids is not None and i < len(item_ids):
+                item_id = str(item_ids[i])
+            else:
+                item_id = str(i)
+            router_log_prob = float(log_probs[i].detach().cpu().item()) if isinstance(log_probs, torch.Tensor) else ""
+            router_agent_num_pred = float(agent_num_float[i].detach().cpu().item()) if isinstance(agent_num_float, torch.Tensor) else ""
+            router_task_probs_json = ""
+            try:
+                if isinstance(tasks_probs, torch.Tensor):
+                    task_probs = tasks_probs[i].detach().cpu().tolist()
+                    router_task_probs_json = [{"task": tasks[j]["Name"], "prob": float(prob)} for j, prob in enumerate(task_probs)]
+            except Exception:
+                router_task_probs_json = ""
             logger.info(f'Query: {query}')
             logger.info(f'Task: {task["Name"]}')
             logger.info(f'LLMs: {llm_names}')
             logger.info(f'Reasoning: {collab["Name"]}')
             logger.info(f'Roles: {role_names}')
             logger.info('-----------------------------------')
-            g = Graph(domain = task['Name'], llm_names = llm_names, agent_names = role_names, 
-                      decision_method = "FinalRefer", prompt_file = prompt_file, reasoning_name=collab["Name"], **kwargs)
-            self.g = g
-            final_result.append(g.run(inputs={"query":query}, num_rounds=kwargs["num_rounds"])[0][0])
-            costs.append(Cost.instance().value - previous_cost)
+            trace = GraphTrace() if telemetry_writer is not None else None
+            workflow_error = ""
+            graph_id = ""
+            try:
+                if trace is not None:
+                    trace.start_workflow()
+                g = Graph(
+                    domain=task["Name"],
+                    llm_names=llm_names,
+                    agent_names=role_names,
+                    decision_method="FinalRefer",
+                    prompt_file=prompt_file,
+                    reasoning_name=collab["Name"],
+                    **kwargs,
+                )
+                self.g = g
+                graph_id = getattr(g, "id", "")
+                final_result.append(g.run(inputs={"query": query}, num_rounds=kwargs["num_rounds"], trace=trace)[0][0])
+                costs.append(Cost.instance().value - previous_cost)
+            except Exception as e:
+                workflow_error = str(e)
+                raise
+            finally:
+                if telemetry_writer is not None and trace is not None:
+                    trace.end_workflow(success=(workflow_error == ""), error=workflow_error)
+                    workflow = trace.workflow_timing() or {}
+
+                    role_llm_map = [{"role": r, "llm": l} for r, l in zip(role_names, llm_names)]
+                    base_meta = {
+                        "run_id": run_id,
+                        "dataset": dataset or "",
+                        "split": split or "",
+                        "batch_id": batch_id if batch_id is not None else "",
+                        "item_id": item_id,
+                        "task_name": task.get("Name", ""),
+                        "reasoning_name": collab.get("Name", ""),
+                        "decision_method": "FinalRefer",
+                        "graph_id": graph_id,
+                        "num_rounds": kwargs.get("num_rounds", ""),
+                        "num_agents": len(llm_names),
+                        "agent_roles_json": role_names,
+                        "agent_llms_json": llm_names,
+                        "role_llm_map_json": role_llm_map,
+                        "router_log_prob": router_log_prob,
+                        "router_task_probs_json": router_task_probs_json,
+                        "router_agent_num_pred": router_agent_num_pred,
+                    }
+
+                    node_rows = []
+                    for event in sorted(trace.node_events, key=lambda x: (x.round_idx, x.ts_start)):
+                        node_rows.append(
+                            {
+                                **base_meta,
+                                "record_type": "node",
+                                "node_id": event.node_id,
+                                "node_name": event.node_name,
+                                "role_name": event.role_name,
+                                "llm_name": event.llm_name,
+                                "is_decision_node": event.is_decision_node,
+                                "round_idx": event.round_idx,
+                                "attempts": event.attempts,
+                                "success": event.success,
+                                "error": event.error,
+                                "ts_start": event.ts_start,
+                                "ts_end": event.ts_end,
+                                "duration_sec": event.duration_sec,
+                                "cost_delta": event.cost_delta,
+                                "prompt_tokens": event.prompt_tokens,
+                                "completion_tokens": event.completion_tokens,
+                                "total_tokens": event.prompt_tokens + event.completion_tokens,
+                            }
+                        )
+
+                    prompt_tokens = int(sum(event.prompt_tokens for event in trace.node_events))
+                    completion_tokens = int(sum(event.completion_tokens for event in trace.node_events))
+                    cost_delta = float(sum(event.cost_delta for event in trace.node_events))
+                    decision_event = None
+                    for event in trace.node_events:
+                        if event.is_decision_node:
+                            decision_event = event
+                    workflow_row = {
+                        **base_meta,
+                        "record_type": "workflow",
+                        "success": workflow.get("success", True),
+                        "error": workflow.get("error", ""),
+                        "ts_start": workflow.get("ts_start", ""),
+                        "ts_end": workflow.get("ts_end", ""),
+                        "duration_sec": workflow.get("duration_sec", ""),
+                        "cost_delta": cost_delta,
+                        "prompt_tokens": prompt_tokens,
+                        "completion_tokens": completion_tokens,
+                        "total_tokens": prompt_tokens + completion_tokens,
+                        "output_text": decision_event.output_text if decision_event else "",
+                    }
+
+                    telemetry_writer.append_rows([workflow_row, *node_rows])
 
         return final_result, costs, log_probs, tasks_probs, vae_loss, agent_num_float
     

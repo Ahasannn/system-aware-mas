@@ -22,6 +22,7 @@ from MAR.Tools.coding.python_executor import PyExecutor
 from MAR.Utils.utils import fix_random_seed
 from MAR.Utils.globals import Cost, PromptTokens, CompletionTokens
 from MAR.Utils.log import configure_logging
+from MAR.Utils.telemetry import CsvTelemetryWriter
 
 from Datasets.mbpp_dataset import MbppDataset, MbppDataLoader
 
@@ -162,28 +163,65 @@ if __name__ == '__main__':
     logger.info("Start testing...")
     total_solved, total_executed = (0, 0)
     test_loader = MbppDataLoader(test_dataset, batch_size=args.batch_size, shuffle=True)
+    telemetry_csv = f"logs/{args.domain}_{current_time}_telemetry.csv"
+    logger.info(f"Telemetry CSV: {telemetry_csv}")
+    quality_writer = CsvTelemetryWriter(telemetry_csv)
 
     for i_batch, current_batch in enumerate(test_loader):
         start_ts = time.time()
         logger.info(f"Batch {i_batch}",80*'-')
         queries = [item['task'] for item in current_batch]
         tests = [item['test_list'] for item in current_batch]
+        item_ids = [item["task_id"] for item in current_batch]
         task_labels = [2 for _ in current_batch]
         tasks_y = torch.tensor(task_labels).to(device)
-        results, costs, log_probs, tasks_probs, vae_loss, agents_num = router.forward(queries, tasks, llms, reasonings, task_labels, prompt_file=args.prompt_file)
+        results, costs, log_probs, tasks_probs, vae_loss, agents_num = router.forward(
+            queries,
+            tasks,
+            llms,
+            reasonings,
+            task_labels,
+            prompt_file=args.prompt_file,
+            telemetry_path=telemetry_csv,
+            item_ids=item_ids,
+            dataset=args.domain,
+            split="test",
+            batch_id=i_batch,
+            run_id=current_time,
+        )
         utilities = []
         pattern = r'```python.*```'
-        for query, result, test, log_prob, cost in zip(queries, results, tests, log_probs, costs):
+        for item_id, query, result, test, log_prob, cost in zip(item_ids, queries, results, tests, log_probs, costs):
+            eval_start_ts = time.time()
             match = re.search(pattern, result, re.DOTALL|re.MULTILINE)
             if match:
                 answer = match.group(0).lstrip("```python\n").rstrip("\n```")
-                is_solved, _, _ = PyExecutor().execute(answer, test, timeout=100)
+                is_solved, feedback, state = PyExecutor().execute(answer, list(test), timeout=100)
             else:
+                feedback = "No python code block found in the model output."
+                state = ()
                 is_solved = 0
             total_solved = total_solved + is_solved
             total_executed = total_executed + 1
             utility = is_solved - cost * args.cost_rate
             utilities.append(utility)
+            quality_writer.append_rows(
+                [
+                    {
+                        "run_id": current_time,
+                        "dataset": args.domain,
+                        "split": "test",
+                        "batch_id": i_batch,
+                        "item_id": str(item_id),
+                        "record_type": "quality",
+                        "quality_is_correct": bool(is_solved),
+                        "quality_feedback": feedback,
+                        "quality_state_json": list(state) if state else "",
+                        "eval_duration_sec": time.time() - eval_start_ts,
+                        "utility": utility,
+                    }
+                ]
+            )
 
         accuracy = total_solved / total_executed
         logger.info(f"Batch time {time.time() - start_ts:.3f}")

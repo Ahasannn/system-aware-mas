@@ -23,6 +23,7 @@ from MAR.Tools.coding.python_executor import PyExecutor
 from MAR.Utils.utils import fix_random_seed
 from MAR.Utils.globals import Cost, PromptTokens, CompletionTokens
 from MAR.Utils.log import configure_logging
+from MAR.Utils.telemetry import CsvTelemetryWriter
 from Datasets.mmlu_dataset import MMLUDataset
 from Datasets.MMLU.download import download
 from Datasets.math_dataset import MATH_get_predict
@@ -145,29 +146,71 @@ if __name__ == '__main__':
     logger.info("Start testing...")
     total_solved, total_executed = (0, 0)
     test_batch = min(80, len(dataset_test)//args.batch_size)
+    telemetry_csv = f"logs/{args.domain}_{current_time}_telemetry.csv"
+    logger.info(f"Telemetry CSV: {telemetry_csv}")
+    quality_writer = CsvTelemetryWriter(telemetry_csv)
     for i_batch in range(test_batch):
         if i_batch < train_batch:
             continue
         print(f"Batch {i_batch}",80*'-')
         start_ts = time.time()
         current_batch = dataloader(dataset_test, args.batch_size, i_batch)
-        current_batch = [{"task":dataset_test.record_to_input(record)["task"],"answer":dataset_test.record_to_target_answer(record)} for row, record in current_batch.iterrows()]
+        current_batch = [
+            {
+                "item_id": int(row),
+                "task": dataset_test.record_to_input(record)["task"],
+                "answer": dataset_test.record_to_target_answer(record),
+            }
+            for row, record in current_batch.iterrows()
+        ]
         
         queries = [item['task'] for item in current_batch]
         answers = [item['answer'] for item in current_batch]
+        item_ids = [item["item_id"] for item in current_batch]
         task_labels = [1 for _ in current_batch]
         tasks_y = torch.tensor(task_labels).to(device)
-        results, costs, log_probs, tasks_probs, vae_loss, agents_num = router.forward(queries, tasks, llms, reasonings, task_labels, prompt_file=args.prompt_file)
+        results, costs, log_probs, tasks_probs, vae_loss, agents_num = router.forward(
+            queries,
+            tasks,
+            llms,
+            reasonings,
+            task_labels,
+            prompt_file=args.prompt_file,
+            telemetry_path=telemetry_csv,
+            item_ids=item_ids,
+            dataset=args.domain,
+            split="test",
+            batch_id=i_batch,
+            run_id=current_time,
+        )
         utilities = []
         answers_loss = []
 
-        for query, result, answer, log_prob, cost in zip(queries, results, answers, log_probs, costs):
+        for item_id, query, result, answer, log_prob, cost in zip(item_ids, queries, results, answers, log_probs, costs):
+            eval_start_ts = time.time()
             predict_answer = MATH_get_predict(result)[0]
             is_solved = str(predict_answer)==str(answer)
             total_solved = total_solved + is_solved
             total_executed = total_executed + 1
             utility = is_solved - cost * args.cost_rate
             utilities.append(utility)
+            quality_writer.append_rows(
+                [
+                    {
+                        "run_id": current_time,
+                        "dataset": args.domain,
+                        "split": "test",
+                        "batch_id": i_batch,
+                        "item_id": str(item_id),
+                        "record_type": "quality",
+                        "quality_is_correct": bool(is_solved),
+                        "quality_pred": str(predict_answer),
+                        "quality_gold": str(answer),
+                        "eval_duration_sec": time.time() - eval_start_ts,
+                        "utility": utility,
+                    }
+                ]
+            )
         
         accuracy = total_solved / total_executed
         logger.info(f"Batch time {time.time() - start_ts:.3f}")

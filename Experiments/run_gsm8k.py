@@ -21,6 +21,7 @@ from MAR.Utils.utils import fix_random_seed,split_list
 from MAR.Utils.globals import Cost, PromptTokens, CompletionTokens
 from Datasets.gsm8k_dataset import gsm_data_process, gsm_get_predict
 from MAR.Utils.log import configure_logging
+from MAR.Utils.telemetry import CsvTelemetryWriter
 from loguru import logger
 
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
@@ -135,24 +136,58 @@ if __name__ == '__main__':
 
     test_batches = int(len(test_dataset)/args.batch_size)
     total_solved, total_executed = (0, 0)
+    telemetry_csv = f"logs/{args.domain}_{current_time}_telemetry.csv"
+    logger.info(f"Telemetry CSV: {telemetry_csv}")
+    quality_writer = CsvTelemetryWriter(telemetry_csv)
     for i_batch in range(test_batches):
         logger.info(f"Batch {i_batch}",80*'-')
         start_ts = time.time()
         current_batch = dataloader(test_dataset,args.batch_size,i_batch)
         queries = [item['task'] for item in current_batch]
         answers = [item['answer'] for item in current_batch]
+        item_ids = [item.get("id", i_batch * args.batch_size + j) for j, item in enumerate(current_batch)]
         task_labels = [0 for _ in current_batch]
         tasks_y = torch.tensor(task_labels).to(device)
         optimizer.zero_grad()
-        results, costs, log_probs, tasks_probs, vae_loss, agents_num = router.forward(queries, tasks, llms, reasonings, task_labels)
+        results, costs, log_probs, tasks_probs, vae_loss, agents_num = router.forward(
+            queries,
+            tasks,
+            llms,
+            reasonings,
+            task_labels,
+            telemetry_path=telemetry_csv,
+            item_ids=item_ids,
+            dataset=args.domain,
+            split="test",
+            batch_id=i_batch,
+            run_id=current_time,
+        )
         utilities = []
-        for result, true_answer, log_prob, cost in zip(results, answers, log_probs, costs):
+        for item_id, result, true_answer, log_prob, cost in zip(item_ids, results, answers, log_probs, costs):
+            eval_start_ts = time.time()
             predict_answer = gsm_get_predict(result)
             is_solved = float(predict_answer)==float(true_answer)
             total_solved = total_solved + is_solved
             total_executed = total_executed + 1
             utility = is_solved - cost * args.cost_rate
             utilities.append(utility)
+            quality_writer.append_rows(
+                [
+                    {
+                        "run_id": current_time,
+                        "dataset": args.domain,
+                        "split": "test",
+                        "batch_id": i_batch,
+                        "item_id": str(item_id),
+                        "record_type": "quality",
+                        "quality_is_correct": bool(is_solved),
+                        "quality_pred": str(predict_answer),
+                        "quality_gold": str(true_answer),
+                        "eval_duration_sec": time.time() - eval_start_ts,
+                        "utility": utility,
+                    }
+                ]
+            )
 
         accuracy = total_solved / total_executed
         logger.info(f"Batch time {time.time() - start_ts:.3f}")
