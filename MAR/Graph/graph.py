@@ -41,6 +41,8 @@ class Graph(ABC):
                 decision_method: str,
                 reasoning_name: str,
                 prompt_file: str,
+                runtime_llm_assignment: bool = False,
+                latency_budget: Optional[str] = None,
                 optimized_spatial:bool = False,
                 initial_spatial_probability: float = 0.5,
                 fixed_spatial_masks:List[List[int]] = None,
@@ -65,6 +67,9 @@ class Graph(ABC):
         self.llm_names:List[str] = llm_names
         self.final_llm_name:str = find_mode(llm_names)
         self.agent_names:List[str] = agent_names
+        self.runtime_llm_assignment = runtime_llm_assignment
+        self.runtime_llm_map: Dict[str, str] = {}
+        self.latency_budget = latency_budget
         self.optimized_spatial = optimized_spatial
         self.optimized_temporal = optimized_temporal
         self.decision_node:Node = AgentRegistry.get(decision_method, **{"domain":self.domain,"llm_name":self.final_llm_name, "prompt_file":prompt_file})
@@ -137,11 +142,29 @@ class Graph(ABC):
         for agent_name, llm_name, kwargs in zip(self.agent_names, self.llm_names, self.node_kwargs):
             if "Agent" in AgentRegistry.registry:
                 kwargs["domain"] = self.domain
-                kwargs["llm_name"] = llm_name
+                kwargs["llm_name"] = "" if self.runtime_llm_assignment else llm_name
                 kwargs["reason_name"] = self.reasoning_name
                 kwargs["role"] = agent_name
+                if self.latency_budget:
+                    kwargs["latency_budget"] = self.latency_budget
                 agent_instance = AgentRegistry.get("Agent", **kwargs)
-                self.add_node(agent_instance)
+                agent_instance = self.add_node(agent_instance)
+                if self.runtime_llm_assignment:
+                    self.runtime_llm_map[agent_instance.id] = llm_name
+
+    def _assign_runtime_llm(self, node_id: str) -> None:
+        if not self.runtime_llm_assignment:
+            return
+        llm_name = self.runtime_llm_map.get(node_id)
+        if not llm_name:
+            return
+        node = self.nodes.get(node_id)
+        if node is None:
+            return
+        if hasattr(node, "set_llm"):
+            node.set_llm(llm_name)
+        else:
+            setattr(node, "llm_name", llm_name)
     
     def init_potential_edges(self):
         """
@@ -296,6 +319,7 @@ class Graph(ABC):
                             while tries < max_tries:
                                 tries += 1
                                 try:
+                                    self._assign_runtime_llm(node_id)
                                     self.nodes[node_id].execute(inputs)  # output is saved in the node.outputs
                                     success = True
                                     break
@@ -472,6 +496,7 @@ class Graph(ABC):
                         while tries < max_tries:
                             tries += 1
                             try:
+                                self._assign_runtime_llm(current_node_id)
                                 await asyncio.wait_for(
                                     self.nodes[current_node_id].async_execute(input),
                                     timeout=max_time,

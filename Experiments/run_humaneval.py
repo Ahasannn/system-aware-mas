@@ -59,6 +59,8 @@ def parse_args():
     parser.add_argument('--start_epoch', type=int, default=0)
     parser.add_argument('--cost_rate', type=float, default=200.0)
     parser.add_argument('--max_agent', type=int, default=6)
+    parser.add_argument('--variant', type=str, default='baseline', choices=['baseline', 'modified'],
+                        help="Run variant: baseline (static LLMs) or modified (runtime LLMs + latency budget).")
     args = parser.parse_args()
     return args
 
@@ -96,7 +98,15 @@ if __name__ == '__main__':
             task_labels = [2 for _ in current_batch]
             tasks_y = torch.tensor(task_labels).to(device)
             optimizer.zero_grad()
-            results, costs, log_probs, tasks_probs, vae_loss, agents_num = router.forward(queries, tasks, llms, reasonings, task_labels, prompt_file=args.prompt_file)
+            results, costs, log_probs, tasks_probs, vae_loss, agents_num = router.forward(
+                queries,
+                tasks,
+                llms,
+                reasonings,
+                task_labels,
+                prompt_file=args.prompt_file,
+                variant=args.variant,
+            )
 
             task_loss = F.cross_entropy(tasks_probs, tasks_y)
             utilities = []
@@ -164,6 +174,7 @@ if __name__ == '__main__':
             split="test",
             batch_id=i_batch,
             run_id=current_time,
+            variant=args.variant,
         )
 
         utilities = []

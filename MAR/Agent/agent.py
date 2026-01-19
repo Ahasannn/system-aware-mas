@@ -14,11 +14,20 @@ from MAR.Prompts.reasoning import reasoning_prompt
 
 @AgentRegistry.register('Agent')
 class Agent(Node):
-    def __init__(self, id: str | None =None, domain: str = "", role:str = None , llm_name: str = "",reason_name: str = "",):
+    def __init__(
+        self,
+        id: str | None = None,
+        domain: str = "",
+        role: str | None = None,
+        llm_name: str = "",
+        reason_name: str = "",
+        latency_budget: str | None = None,
+    ):
         super().__init__(id, reason_name, domain, llm_name)
         self.llm = LLMRegistry.get(llm_name)
         self.role = RoleRegistry(domain, role)
         self.reason = reason_name
+        self.latency_budget = latency_budget
 
         self.message_aggregation = self.role.get_message_aggregation()
         self.description = self.role.get_description()
@@ -39,11 +48,21 @@ class Agent(Node):
         reason_prompt = reasoning_prompt[self.reason]
 
         system_prompt = f"{self.description}\n{reason_prompt}"
+        if self.latency_budget:
+            system_prompt += f"\nLatency budget: {self.latency_budget}. Work a bit faster and be concise."
         system_prompt += f"\nFormat requirements that must be followed:\n{format_prompt}" if format_prompt else ""
         user_prompt = f"{query}\n"
         user_prompt += f"At the same time, other agents' outputs are as follows:\n\n{spatial_prompt}" if spatial_prompt else ""
         user_prompt += f"\n\nIn the last round of dialogue, other agents' outputs were:\n\n{temporal_prompt}" if temporal_prompt else ""
         return [{'role':'system','content':system_prompt},{'role':'user','content':user_prompt}]
+
+    def set_llm(self, llm_name: str) -> None:
+        if not llm_name:
+            return
+        if llm_name == self.llm_name:
+            return
+        self.llm_name = llm_name
+        self.llm = LLMRegistry.get(llm_name)
 
     def _execute(self, input:Dict[str,str],  spatial_info:Dict[str,Dict], temporal_info:Dict[str,Dict],**kwargs):
         """

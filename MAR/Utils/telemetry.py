@@ -29,7 +29,9 @@ def _to_csv_value(value: Any) -> Any:
     if isinstance(value, str):
         value = value.replace("\r\n", "\n").replace("\r", "\n")
         return value.replace("\n", "\\n")
-    if isinstance(value, (int, float, bool)):
+    if isinstance(value, bool):
+        return int(value)
+    if isinstance(value, (int, float)):
         return value
     if isinstance(value, (list, dict, tuple)):
         return _json_dumps(value)

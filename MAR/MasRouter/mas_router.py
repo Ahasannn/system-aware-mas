@@ -109,7 +109,8 @@ class MasRouter(nn.Module):
                 dataset: Optional[str] = None,
                 split: Optional[str] = None,
                 batch_id: Optional[int] = None,
-                run_id: Optional[str] = None):
+                run_id: Optional[str] = None,
+                variant: str = "baseline"):
         """
         queries:List[Dict[str, str]]: List of queries
         tasks:List[Dict[str, str]]: List of tasks
@@ -155,6 +156,9 @@ class MasRouter(nn.Module):
         final_result = []
         costs = []
         telemetry_writer = CsvTelemetryWriter(telemetry_path) if telemetry_path else None
+        variant = (variant or "baseline").strip().lower()
+        runtime_llm_assignment = variant == "modified"
+        latency_budget = "medium" if variant == "modified" else None
         run_id = run_id or uuid.uuid4().hex[:8]
         for i, (query, task, llms, collab, roles) in enumerate(
             zip(queries, selected_tasks, selected_llms, selected_collabs, selected_roles)
@@ -196,6 +200,8 @@ class MasRouter(nn.Module):
                     decision_method="FinalRefer",
                     prompt_file=prompt_file,
                     reasoning_name=collab["Name"],
+                    runtime_llm_assignment=runtime_llm_assignment,
+                    latency_budget=latency_budget,
                     **kwargs,
                 )
                 self.g = g
