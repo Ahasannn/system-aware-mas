@@ -66,5 +66,3 @@ Your code should pass these tests:
         tasks.append(text)
     df["task"] = tasks
     return df
-
-MbppDataset(split='test')

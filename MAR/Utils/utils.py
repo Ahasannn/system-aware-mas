@@ -92,6 +92,8 @@ def extract_json(raw:str)->str:
     return match.group(0) if match else ""
 
 def fix_random_seed(seed:int=1234):
+    random.seed(seed)
+    np.random.seed(seed)
     torch.manual_seed(seed)
     torch.cuda.manual_seed(seed)
     torch.cuda.manual_seed_all(seed)

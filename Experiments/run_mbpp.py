@@ -15,13 +15,14 @@ from loguru import logger
 import torch.nn.functional as F
 
 from MAR.MasRouter.mas_router import MasRouter
-from MAR.LLM.llm_profile import llm_profile
+from MAR.LLM.llm_profile_test import llm_profile
 from MAR.Agent.reasoning_profile import reasoning_profile
 from MAR.Prompts.tasks_profile import tasks_profile
 from MAR.Tools.coding.python_executor import PyExecutor
 from MAR.Utils.utils import fix_random_seed
 from MAR.Utils.globals import Cost, PromptTokens, CompletionTokens
 from MAR.Utils.log import configure_logging
+from MAR.Utils.telemetry import CsvTelemetryWriter
 
 from Datasets.mbpp_dataset import MbppDataset, MbppDataLoader
 
@@ -47,6 +48,20 @@ def parse_args():
     parser = argparse.ArgumentParser(description="AgentPrune Experiments on mbpp")
     parser.add_argument("--dataset_json", type=str, default="Datasets/mbpp/mbpp.jsonl")
     parser.add_argument("--result_file", type=str, default=None)
+    parser.add_argument(
+        "--limit",
+        type=int,
+        default=0,
+        help="(Deprecated) If >0, only run the first N examples (applies to both train and test).",
+    )
+    parser.add_argument("--train_limit", type=int, default=0, help="If >0, only run the first N training examples.")
+    parser.add_argument("--test_limit", type=int, default=0, help="If >0, only run the first N test examples.")
+    parser.add_argument(
+        "--checkpoint",
+        type=str,
+        default="",
+        help="Optional path to a router .pth checkpoint to load before training/testing.",
+    )
     parser.add_argument('--lr', type=float, default=0.01,help="learning rate")
     parser.add_argument('--batch_size', type=int, default=16,help="batch size")
     parser.add_argument('--epochs', type=int, default=10, help="Default 10.")
@@ -58,6 +73,8 @@ def parse_args():
     parser.add_argument('--start_epoch', type=int, default=0)
     parser.add_argument('--cost_rate', type=float, default=400.0)
     parser.add_argument('--max_agent', type=int, default=6)
+    parser.add_argument('--variant', type=str, default='baseline', choices=['baseline', 'modified'],
+                        help="Run variant: baseline (static LLMs) or modified (runtime LLMs + latency budget).")
     args = parser.parse_args()
     return args
 
@@ -68,12 +85,26 @@ if __name__ == '__main__':
     train_dataset = MbppDataset('train')
     test_dataset = MbppDataset('test')
 
+    # Backwards compatible: `--limit` applies to both unless overridden.
+    if args.limit and args.limit > 0:
+        if not args.train_limit:
+            args.train_limit = args.limit
+        if not args.test_limit:
+            args.test_limit = args.limit
+
+    if args.train_limit and args.train_limit > 0:
+        train_dataset.df = train_dataset.df.iloc[: args.train_limit].reset_index(drop=True)
+    if args.test_limit and args.test_limit > 0:
+        test_dataset.df = test_dataset.df.iloc[: args.test_limit].reset_index(drop=True)
+
     current_time = time.strftime("%Y-%m-%d-%H-%M-%S", time.localtime())
     log_file = f"mbpp_{current_time}.txt"
     configure_logging(log_name=log_file)
 
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     router = MasRouter(max_agent=args.max_agent,device=device).to(device)
+    if args.checkpoint:
+        router.load_state_dict(torch.load(args.checkpoint, map_location=device))
     optimizer = torch.optim.Adam(router.parameters(), lr=args.lr)
     tasks = tasks_profile
     llms = llm_profile
@@ -95,7 +126,15 @@ if __name__ == '__main__':
             task_labels = [2 for _ in current_batch]
             tasks_y = torch.tensor(task_labels).to(device)
             optimizer.zero_grad()
-            results, costs, log_probs, tasks_probs, vae_loss, agents_num = router.forward(queries, tasks, llms, reasonings, task_labels, prompt_file=args.prompt_file)
+            results, costs, log_probs, tasks_probs, vae_loss, agents_num = router.forward(
+                queries,
+                tasks,
+                llms,
+                reasonings,
+                task_labels,
+                prompt_file=args.prompt_file,
+                variant=args.variant,
+            )
             
             task_loss = F.cross_entropy(tasks_probs, tasks_y)
             utilities = []
@@ -134,28 +173,66 @@ if __name__ == '__main__':
     logger.info("Start testing...")
     total_solved, total_executed = (0, 0)
     test_loader = MbppDataLoader(test_dataset, batch_size=args.batch_size, shuffle=True)
+    telemetry_csv = f"logs/{args.domain}_{current_time}_telemetry.csv"
+    logger.info(f"Telemetry CSV: {telemetry_csv}")
+    quality_writer = CsvTelemetryWriter(telemetry_csv)
 
     for i_batch, current_batch in enumerate(test_loader):
         start_ts = time.time()
         logger.info(f"Batch {i_batch}",80*'-')
         queries = [item['task'] for item in current_batch]
         tests = [item['test_list'] for item in current_batch]
+        item_ids = [item["task_id"] for item in current_batch]
         task_labels = [2 for _ in current_batch]
         tasks_y = torch.tensor(task_labels).to(device)
-        results, costs, log_probs, tasks_probs, vae_loss, agents_num = router.forward(queries, tasks, llms, reasonings, task_labels, prompt_file=args.prompt_file)
+        results, costs, log_probs, tasks_probs, vae_loss, agents_num = router.forward(
+            queries,
+            tasks,
+            llms,
+            reasonings,
+            task_labels,
+            prompt_file=args.prompt_file,
+            telemetry_path=telemetry_csv,
+            item_ids=item_ids,
+            dataset=args.domain,
+            split="test",
+            batch_id=i_batch,
+            run_id=current_time,
+            variant=args.variant,
+        )
         utilities = []
         pattern = r'```python.*```'
-        for query, result, test, log_prob, cost in zip(queries, results, tests, log_probs, costs):
+        for item_id, query, result, test, log_prob, cost in zip(item_ids, queries, results, tests, log_probs, costs):
+            eval_start_ts = time.time()
             match = re.search(pattern, result, re.DOTALL|re.MULTILINE)
             if match:
                 answer = match.group(0).lstrip("```python\n").rstrip("\n```")
-                is_solved, _, _ = PyExecutor().execute(answer, test, timeout=100)
+                is_solved, feedback, state = PyExecutor().execute(answer, list(test), timeout=100)
             else:
+                feedback = "No python code block found in the model output."
+                state = ()
                 is_solved = 0
             total_solved = total_solved + is_solved
             total_executed = total_executed + 1
             utility = is_solved - cost * args.cost_rate
             utilities.append(utility)
+            quality_writer.append_rows(
+                [
+                    {
+                        "run_id": current_time,
+                        "dataset": args.domain,
+                        "split": "test",
+                        "batch_id": i_batch,
+                        "item_id": str(item_id),
+                        "record_type": "quality",
+                        "quality_is_correct": bool(is_solved),
+                        "quality_feedback": feedback,
+                        "quality_state_json": list(state) if state else "",
+                        "eval_duration_sec": time.time() - eval_start_ts,
+                        "utility": utility,
+                    }
+                ]
+            )
 
         accuracy = total_solved / total_executed
         logger.info(f"Batch time {time.time() - start_ts:.3f}")

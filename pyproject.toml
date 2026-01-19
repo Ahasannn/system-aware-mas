@@ -1,0 +1,55 @@
+[project]
+name = "system-aware-mas"
+version = "0.0.0"
+description = "MasRouter: Learning to Route LLMs for Multi-Agent Systems"
+readme = "README.md"
+requires-python = ">=3.10,<3.13"
+dependencies = [
+  "aiohttp>=3.9",
+  "arxiv>=2.1",
+  "astunparse>=1.6",
+  "beautifulsoup4>=4.12",
+  "charset-normalizer>=3.3",
+  "class-registry>=2.1",
+  "fsspec>=2024.0",
+  "groq>=0.9",
+  "huggingface-hub>=0.23",
+  "langchain-community>=0.2",
+  "loguru>=0.7",
+  "markdown>=3.6",
+  "matplotlib>=3.8",
+  "numpy>=1.26",
+  "openai>=1.0",
+  "openpyxl>=3.1",
+  "pandas>=2.0",
+  "pyarrow>=14.0",
+  "pylatexenc>=2.10",
+  "PyPDF2>=3.0",
+  "python-docx>=1.1",
+  "python-dotenv>=1.0",
+  "python-pptx>=0.6.23",
+  "pyyaml>=6.0",
+  "requests>=2.31",
+  "seaborn>=0.13",
+  "sentence-transformers>=2.7",
+  "setuptools>=68",
+  "shortuuid>=1.0",
+  "tenacity>=8.0",
+  "tiktoken>=0.7",
+  "torch>=2.2",
+  "transformers>=4.43,<4.49",
+  "wikipedia>=1.4",
+  "xlrd>=2.0",
+]
+
+[project.optional-dependencies]
+serve = [
+  "vllm==0.7.3",
+]
+
+[dependency-groups]
+dev = [
+  "pytest>=8.0",
+  "ruff>=0.5",
+  "shellcheck-py>=0.10",
+]

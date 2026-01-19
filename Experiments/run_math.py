@@ -13,13 +13,14 @@ import torch
 import torch.nn.functional as F
 
 from MAR.MasRouter.mas_router import MasRouter
-from MAR.LLM.llm_profile import llm_profile
+from MAR.LLM.llm_profile_test import llm_profile
 from MAR.Agent.reasoning_profile import reasoning_profile
 from MAR.Prompts.tasks_profile import tasks_profile
 from MAR.Utils.utils import fix_random_seed
 from MAR.Utils.globals import Cost, PromptTokens, CompletionTokens
 from Datasets.math_dataset import load_math_dataset,MATH_is_correct,MATH_get_predict
 from MAR.Utils.log import configure_logging
+from MAR.Utils.telemetry import CsvTelemetryWriter
 from loguru import logger
 
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
@@ -54,6 +55,8 @@ def parse_args():
     parser.add_argument('--start_epoch', type=int, default=0)
     parser.add_argument('--cost_rate', type=float, default=100.0)
     parser.add_argument('--max_agent', type=int, default=6)
+    parser.add_argument('--variant', type=str, default='baseline', choices=['baseline', 'modified'],
+                        help="Run variant: baseline (static LLMs) or modified (runtime LLMs + latency budget).")
     args = parser.parse_args()
     return args
 
@@ -91,7 +94,15 @@ if __name__ == '__main__':
             task_labels = [0 for _ in current_batch]
             tasks_y = torch.tensor(task_labels).to(device)
             optimizer.zero_grad()
-            results, costs, log_probs, tasks_probs, vae_loss, agents_num = router.forward(queries, tasks, llms, reasonings, task_labels,prompt_file=args.prompt_file)
+            results, costs, log_probs, tasks_probs, vae_loss, agents_num = router.forward(
+                queries,
+                tasks,
+                llms,
+                reasonings,
+                task_labels,
+                prompt_file=args.prompt_file,
+                variant=args.variant,
+            )
 
             task_loss = F.cross_entropy(tasks_probs, tasks_y)
             agent_num_loss = 0
@@ -127,6 +138,9 @@ if __name__ == '__main__':
     logger.info("Start testing...")
     total_solved, total_executed = (0, 0)
     num_batches = int(len(test_dataset)/args.batch_size)
+    telemetry_csv = f"logs/MATH_{current_time}_telemetry.csv"
+    logger.info(f"Telemetry CSV: {telemetry_csv}")
+    quality_writer = CsvTelemetryWriter(telemetry_csv)
 
     for i_batch in range(num_batches):
         logger.info(f"Batch {i_batch}",80*'-')
@@ -134,18 +148,52 @@ if __name__ == '__main__':
         current_batch = dataloader(test_dataset,args.batch_size,i_batch)
         queries = [item['problem'] for item in current_batch]
         answers = [item['solution'] for item in current_batch]
+        item_ids = [item.get("id", i_batch * args.batch_size + j) for j, item in enumerate(current_batch)]
         task_labels = [0 for _ in current_batch]
         tasks_y = torch.tensor(task_labels).to(device)
-        results, costs, log_probs, tasks_probs, vae_loss, agents_num  = router.forward(queries, tasks, llms, reasonings, task_labels,prompt_file=args.prompt_file)
+        results, costs, log_probs, tasks_probs, vae_loss, agents_num  = router.forward(
+            queries,
+            tasks,
+            llms,
+            reasonings,
+            task_labels,
+            prompt_file=args.prompt_file,
+            telemetry_path=telemetry_csv,
+            item_ids=item_ids,
+            dataset="MATH",
+            split="test",
+            batch_id=i_batch,
+            run_id=current_time,
+            variant=args.variant,
+        )
 
         utilities = []
-        for result, true_answer, log_prob, cost in zip(results, answers, log_probs, costs):
+        for item_id, result, true_answer, log_prob, cost in zip(item_ids, results, answers, log_probs, costs):
+            eval_start_ts = time.time()
             predict_answer = MATH_get_predict(result)
+            gold_answer = MATH_get_predict(true_answer)
             is_solved = MATH_is_correct(predict_answer,true_answer)
             total_solved = total_solved + is_solved
             total_executed = total_executed + 1
             utility = is_solved - cost * args.cost_rate
             utilities.append(utility)
+            quality_writer.append_rows(
+                [
+                    {
+                        "run_id": current_time,
+                        "dataset": "MATH",
+                        "split": "test",
+                        "batch_id": i_batch,
+                        "item_id": str(item_id),
+                        "record_type": "quality",
+                        "quality_is_correct": bool(is_solved),
+                        "quality_pred": str(predict_answer),
+                        "quality_gold": str(gold_answer),
+                        "eval_duration_sec": time.time() - eval_start_ts,
+                        "utility": utility,
+                    }
+                ]
+            )
             logger.debug(f"Predict: {predict_answer}")
             logger.debug(f"Truth: {true_answer}")
         

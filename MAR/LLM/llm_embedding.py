@@ -15,5 +15,7 @@ class SentenceEncoder(torch.nn.Module):
     def forward(self, sentence):
         if len(sentence) == 0:
             return torch.tensor([]).to(self.device)
-        embeddings = self.model.encode(sentence,convert_to_tensor=True,device=self.device)
-        return embeddings
+        embeddings = self.model.encode(sentence, convert_to_tensor=True, device=self.device)
+        # sentence-transformers may run under torch.inference_mode(), producing inference tensors.
+        # Convert to a normal tensor so downstream trainable modules can save it for backward.
+        return embeddings.clone()
