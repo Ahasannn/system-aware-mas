@@ -38,6 +38,7 @@ def _to_csv_value(value: Any) -> Any:
     return str(value)
 
 _LLM_USAGE_CONTEXT_KEY: ContextVar[Optional[str]] = ContextVar("llm_usage_context_key", default=None)
+_CSV_LOCK = threading.Lock()
 
 
 class LLMUsageTracker:
@@ -205,7 +206,7 @@ class CsvTelemetryWriter:
         rows_list = list(rows)
         if not rows_list:
             return
-        with self._lock:
+        with _CSV_LOCK, self._lock:
             file_exists = self.path.exists()
             write_header = (not file_exists) or (self.path.stat().st_size == 0)
             with self.path.open("a", newline="", encoding="utf-8") as f:

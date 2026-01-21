@@ -98,7 +98,7 @@ def python_inner_test(raw_inputs:Dict[str,str],messages:Dict[str,Dict]):
         match = re.search(pattern, info['output'], re.DOTALL|re.MULTILINE)
         if match:
             code = match.group(0).lstrip("```python\n").rstrip("\n```")
-            is_solved, feedback, state = PyExecutor().execute(code, internal_tests, timeout=100)
+            is_solved, feedback, state = PyExecutor().execute(code, internal_tests, timeout=100, verbose=False)
             if is_solved:
                 aggregated_message += f"\nThe code is solved.\n {feedback}"
             else:
@@ -144,14 +144,14 @@ def inner_test(raw_inputs:Dict[str,str], spatial_info:Dict[str,Dict], temporal_i
         match = re.search(pattern, info['output'], re.DOTALL|re.MULTILINE)
         if match:
             code = match.group(0).lstrip("```python\n").rstrip("\n```")
-            is_solved, feedback, state = PyExecutor().execute(code, internal_tests, timeout=10)
+            is_solved, feedback, state = PyExecutor().execute(code, internal_tests, timeout=10, verbose=False)
             if is_solved:
                 return is_solved, info['output']
     for id, info in temporal_info.items():
         match = re.search(pattern, info['output'], re.DOTALL|re.MULTILINE)
         if match:
             code = match.group(0).lstrip("```python\n").rstrip("\n```")
-            is_solved, feedback, state = PyExecutor().execute(code, internal_tests, timeout=10)
+            is_solved, feedback, state = PyExecutor().execute(code, internal_tests, timeout=10, verbose=False)
             if is_solved:
                 return is_solved, info['output']
     return False, ""
