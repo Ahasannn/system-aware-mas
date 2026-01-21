@@ -1,7 +1,8 @@
 from class_registry import ClassRegistry
-from typing import Type
+from typing import TYPE_CHECKING, Type
 
-from MAR.Graph import Node
+if TYPE_CHECKING:
+    from MAR.Graph import Node
 
 class AgentRegistry:
     registry = ClassRegistry()
@@ -14,7 +15,7 @@ class AgentRegistry:
         return cls.registry.keys()
     
     @classmethod
-    def get(cls, name:str, *args, **kwargs)->Node:
+    def get(cls, name:str, *args, **kwargs) -> "Node":
         return cls.registry.get(name, *args, **kwargs)
     
     @classmethod

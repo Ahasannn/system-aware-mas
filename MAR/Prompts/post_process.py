@@ -69,7 +69,7 @@ def python_inner_test(raw_inputs:Dict[str,str], output:str):
     match = re.search(pattern, output, re.DOTALL|re.MULTILINE)
     if match:
         code = match.group(0).lstrip("```python\n").rstrip("\n```")
-        is_solved, feedback, state = PyExecutor().execute(code, internal_tests, timeout=10)
+        is_solved, feedback, state = PyExecutor().execute(code, internal_tests, timeout=10, verbose=False)
         if is_solved:
             output += f"\nThe code is solved.\n {feedback}"
         else:

@@ -3,6 +3,8 @@
 
 import ast
 import astunparse
+import contextlib
+import io
 from typing import List
 
 from MAR.Tools.coding.executor_utils import function_with_timeout
@@ -22,7 +24,8 @@ def get_output(func: str, assert_statement: str, timeout: int = 5) -> str:
     try:
         exec(f"from typing import *\n{func}", globals())
         func_call = get_call_str(assert_statement)
-        output = function_with_timeout(eval, (func_call, globals()), timeout)
+        with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+            output = function_with_timeout(eval, (func_call, globals()), timeout)
         return output
     except TimeoutError:
         return "TIMEOUT"
@@ -53,7 +56,11 @@ class PyExecutor(Executor):
         num_tests = len(func_test_list)
         for i in range(num_tests):
             try:
-                function_with_timeout(exec, (func_test_list[i], globals()), timeout)
+                if verbose:
+                    function_with_timeout(exec, (func_test_list[i], globals()), timeout)
+                else:
+                    with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+                        function_with_timeout(exec, (func_test_list[i], globals()), timeout)
                 success_tests.append(tests[i])
             except Exception:
                 output = get_output(func, tests[i], timeout=timeout)

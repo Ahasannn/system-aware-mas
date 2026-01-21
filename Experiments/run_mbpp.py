@@ -23,6 +23,8 @@ from MAR.Utils.utils import fix_random_seed
 from MAR.Utils.globals import Cost, PromptTokens, CompletionTokens
 from MAR.Utils.log import configure_logging
 from MAR.Utils.telemetry import CsvTelemetryWriter
+from MAR.Utils.request_patterns import RequestPattern
+from MAR.Utils.request_shooter import RequestShooter
 
 from Datasets.mbpp_dataset import MbppDataset, MbppDataLoader
 
@@ -75,6 +77,12 @@ def parse_args():
     parser.add_argument('--max_agent', type=int, default=6)
     parser.add_argument('--variant', type=str, default='baseline', choices=['baseline', 'modified'],
                         help="Run variant: baseline (static LLMs) or modified (runtime LLMs + latency budget).")
+    parser.add_argument("--arrival-rate", type=float, default=0.0, help="Arrival rate (req/sec) for test shooting.")
+    parser.add_argument("--arrival-pattern", type=str, default="poisson", help="Arrival pattern for test shooting.")
+    parser.add_argument("--concurrency", type=int, default=1, help="Max concurrent in-flight requests in test shooting.")
+    parser.add_argument("--burst-duration", type=float, default=3.0, help="Burst duration for microburst.")
+    parser.add_argument("--spike-intensity", type=float, default=10.0, help="Spike intensity for microburst.")
+    parser.add_argument("--spike-period", type=float, default=20.0, help="Spike period for microburst.")
     args = parser.parse_args()
     return args
 
@@ -176,35 +184,76 @@ if __name__ == '__main__':
     telemetry_csv = f"logs/{args.domain}_{current_time}_telemetry.csv"
     logger.info(f"Telemetry CSV: {telemetry_csv}")
     quality_writer = CsvTelemetryWriter(telemetry_csv)
+    use_shooter = args.arrival_rate > 0.0 or args.concurrency > 1
+    pattern = r'```python.*```'
 
-    for i_batch, current_batch in enumerate(test_loader):
-        start_ts = time.time()
-        logger.info(f"Batch {i_batch}",80*'-')
-        queries = [item['task'] for item in current_batch]
-        tests = [item['test_list'] for item in current_batch]
-        item_ids = [item["task_id"] for item in current_batch]
-        task_labels = [2 for _ in current_batch]
-        tasks_y = torch.tensor(task_labels).to(device)
-        results, costs, log_probs, tasks_probs, vae_loss, agents_num = router.forward(
-            queries,
-            tasks,
-            llms,
-            reasonings,
-            task_labels,
-            prompt_file=args.prompt_file,
-            telemetry_path=telemetry_csv,
-            item_ids=item_ids,
-            dataset=args.domain,
-            split="test",
-            batch_id=i_batch,
-            run_id=current_time,
-            variant=args.variant,
+    if use_shooter:
+        pattern_gen = RequestPattern(
+            pattern=args.arrival_pattern,
+            rate=args.arrival_rate,
+            spike_intensity=args.spike_intensity,
+            spike_period=args.spike_period,
+            burst_duration=args.burst_duration,
+            seed=1234,
         )
-        utilities = []
-        pattern = r'```python.*```'
-        for item_id, query, result, test, log_prob, cost in zip(item_ids, queries, results, tests, log_probs, costs):
+        shooter = RequestShooter(
+            pattern_gen,
+            max_concurrency=args.concurrency,
+            capture_output=True,
+            collect_results=True,
+        )
+
+        def handler(row):
+            query = row["task"]
+            tests = row["test_list"]
+            item_id = row.get("task_id", "")
+            task_labels = [2]
+            with torch.no_grad():
+                results, costs, log_probs, tasks_probs, vae_loss, agents_num = router.forward(
+                    [query],
+                    [tests],
+                    llms,
+                    reasonings,
+                    task_labels,
+                    prompt_file=args.prompt_file,
+                    telemetry_path=telemetry_csv,
+                    item_ids=[item_id],
+                    dataset=args.domain,
+                    split="test",
+                    batch_id=0,
+                    run_id=current_time,
+                    variant=args.variant,
+                )
+            return {
+                "query": query,
+                "tests": tests,
+                "item_id": item_id,
+                "result": results[0],
+                "cost": costs[0],
+                "log_prob": log_probs[0],
+            }
+
+        items = test_dataset.df.to_dict("records")
+        results = shooter.run(
+            items,
+            handler=handler,
+            item_id_fn=lambda row, idx: str(row.get("task_id", idx)),
+        )
+        for res in sorted(results, key=lambda r: r.index):
+            if not res.success:
+                logger.warning("request_failed idx={} item_id={} error={}", res.index, res.item_id, res.error)
+                continue
+            payload = res.output
+            if payload is None:
+                logger.warning("request_empty_output idx={} item_id={}", res.index, res.item_id)
+                continue
+            query = payload["query"]
+            test = payload["tests"]
+            item_id = payload["item_id"]
+            result = payload["result"]
+            cost = payload["cost"]
             eval_start_ts = time.time()
-            match = re.search(pattern, result, re.DOTALL|re.MULTILINE)
+            match = re.search(pattern, result, re.DOTALL | re.MULTILINE)
             if match:
                 answer = match.group(0).lstrip("```python\n").rstrip("\n```")
                 is_solved, feedback, state = PyExecutor().execute(answer, list(test), timeout=100)
@@ -215,14 +264,13 @@ if __name__ == '__main__':
             total_solved = total_solved + is_solved
             total_executed = total_executed + 1
             utility = is_solved - cost * args.cost_rate
-            utilities.append(utility)
             quality_writer.append_rows(
                 [
                     {
                         "run_id": current_time,
                         "dataset": args.domain,
                         "split": "test",
-                        "batch_id": i_batch,
+                        "batch_id": "",
                         "item_id": str(item_id),
                         "record_type": "quality",
                         "quality_is_correct": bool(is_solved),
@@ -233,10 +281,68 @@ if __name__ == '__main__':
                     }
                 ]
             )
+        accuracy = total_solved / total_executed if total_executed else 0.0
+        logger.info("Shot {} requests. Accuracy: {}", total_executed, accuracy)
+    else:
+        for i_batch, current_batch in enumerate(test_loader):
+            start_ts = time.time()
+            logger.info(f"Batch {i_batch}",80*'-')
+            queries = [item['task'] for item in current_batch]
+            tests = [item['test_list'] for item in current_batch]
+            item_ids = [item["task_id"] for item in current_batch]
+            task_labels = [2 for _ in current_batch]
+            tasks_y = torch.tensor(task_labels).to(device)
+            results, costs, log_probs, tasks_probs, vae_loss, agents_num = router.forward(
+                queries,
+                tasks,
+                llms,
+                reasonings,
+                task_labels,
+                prompt_file=args.prompt_file,
+                telemetry_path=telemetry_csv,
+                item_ids=item_ids,
+                dataset=args.domain,
+                split="test",
+                batch_id=i_batch,
+                run_id=current_time,
+                variant=args.variant,
+            )
+            utilities = []
+            for item_id, query, result, test, log_prob, cost in zip(item_ids, queries, results, tests, log_probs, costs):
+                eval_start_ts = time.time()
+                match = re.search(pattern, result, re.DOTALL|re.MULTILINE)
+                if match:
+                    answer = match.group(0).lstrip("```python\n").rstrip("\n```")
+                    is_solved, feedback, state = PyExecutor().execute(answer, list(test), timeout=100)
+                else:
+                    feedback = "No python code block found in the model output."
+                    state = ()
+                    is_solved = 0
+                total_solved = total_solved + is_solved
+                total_executed = total_executed + 1
+                utility = is_solved - cost * args.cost_rate
+                utilities.append(utility)
+                quality_writer.append_rows(
+                    [
+                        {
+                            "run_id": current_time,
+                            "dataset": args.domain,
+                            "split": "test",
+                            "batch_id": i_batch,
+                            "item_id": str(item_id),
+                            "record_type": "quality",
+                            "quality_is_correct": bool(is_solved),
+                            "quality_feedback": feedback,
+                            "quality_state_json": list(state) if state else "",
+                            "eval_duration_sec": time.time() - eval_start_ts,
+                            "utility": utility,
+                        }
+                    ]
+                )
 
-        accuracy = total_solved / total_executed
-        logger.info(f"Batch time {time.time() - start_ts:.3f}")
-        logger.info(f"Accuracy: {accuracy}")
-        logger.info(f"utilities:{utilities}")
+            accuracy = total_solved / total_executed
+            logger.info(f"Batch time {time.time() - start_ts:.3f}")
+            logger.info(f"Accuracy: {accuracy}")
+            logger.info(f"utilities:{utilities}")
     logger.info("End testing...")
     
