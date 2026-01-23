@@ -13,6 +13,7 @@ class LLM(ABC):
         max_tokens: Optional[int] = None,
         temperature: Optional[float] = None,
         num_comps: Optional[int] = None,
+        request_timeout: Optional[float] = None,
         ) -> Union[List[str], str]:
 
         pass
@@ -24,6 +25,7 @@ class LLM(ABC):
         max_tokens: Optional[int] = None,
         temperature: Optional[float] = None,
         num_comps: Optional[int] = None,
+        request_timeout: Optional[float] = None,
         ) -> Union[List[str], str]:
 
         pass

@@ -75,14 +75,38 @@ def parse_args():
     parser.add_argument('--start_epoch', type=int, default=0)
     parser.add_argument('--cost_rate', type=float, default=400.0)
     parser.add_argument('--max_agent', type=int, default=6)
+    parser.add_argument("--request-timeout", type=float, default=120.0, help="Per-request timeout in seconds.")
     parser.add_argument("--arrival-rate", type=float, default=0.0, help="Arrival rate (req/sec) for test shooting.")
     parser.add_argument("--arrival-pattern", type=str, default="poisson", help="Arrival pattern for test shooting.")
     parser.add_argument("--concurrency", type=int, default=1, help="Max concurrent in-flight requests in test shooting.")
     parser.add_argument("--burst-duration", type=float, default=3.0, help="Burst duration for microburst.")
     parser.add_argument("--spike-intensity", type=float, default=10.0, help="Spike intensity for microburst.")
     parser.add_argument("--spike-period", type=float, default=20.0, help="Spike period for microburst.")
+    parser.add_argument("--train-telemetry-csv", type=str, default="", help="CSV path for training telemetry.")
     args = parser.parse_args()
     return args
+
+BASELINE_TRAIN_FIELDS = (
+    "run_id",
+    "epoch",
+    "batch_id",
+    "episode_index",
+    "record_type",
+    "dataset",
+    "split",
+    "item_id",
+    "topology",
+    "role_set",
+    "workflow_latency_seconds",
+    "llm_elapsed_seconds",
+    "quality_is_solved",
+    "step_index",
+    "round_index",
+    "wave_index",
+    "role_name",
+    "llm_name",
+    "latency_seconds",
+)
 
 
 if __name__ == '__main__':
@@ -106,6 +130,10 @@ if __name__ == '__main__':
     current_time = time.strftime("%Y-%m-%d-%H-%M-%S", time.localtime())
     log_file = f"mbpp_{current_time}.txt"
     configure_logging(log_name=log_file)
+    run_id = current_time
+    train_telemetry_csv = args.train_telemetry_csv or f"logs/{args.domain}_{current_time}_train.csv"
+    train_writer = CsvTelemetryWriter(train_telemetry_csv, fieldnames=BASELINE_TRAIN_FIELDS)
+    logger.info(f"Train telemetry CSV: {train_telemetry_csv}")
 
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     router = MasRouter(max_agent=args.max_agent,device=device).to(device)
@@ -117,6 +145,7 @@ if __name__ == '__main__':
     reasonings = reasoning_profile
     logger.info("Start training...")
     
+    episode_counter = 0
     for epoch in range(args.epochs):
         logger.info(f"Epoch {epoch}",80*'-')
         total_solved, total_executed = (0, 0)
@@ -142,14 +171,30 @@ if __name__ == '__main__':
                 prompt_file=args.prompt_file,
                 item_ids=item_ids,
                 dataset=args.domain,
+                request_timeout=args.request_timeout,
             )
-            
-            task_loss = F.cross_entropy(tasks_probs, tasks_y)
+
+            skipped_indices = getattr(router, "last_skipped_indices", set())
+            valid_indices = [idx for idx in range(len(queries)) if idx not in skipped_indices]
+            if not valid_indices:
+                logger.warning("All requests in batch {} timed out; skipping batch.", i_batch)
+                continue
+
+            valid_mask = torch.zeros(len(queries), dtype=torch.bool, device=tasks_y.device)
+            valid_mask[valid_indices] = True
+            tasks_probs_valid = tasks_probs[valid_mask] if isinstance(tasks_probs, torch.Tensor) else tasks_probs
+            tasks_y_valid = tasks_y[valid_mask] if isinstance(tasks_y, torch.Tensor) else tasks_y
+            task_loss = F.cross_entropy(tasks_probs_valid, tasks_y_valid)
             utilities = []
             answers_loss = []
             is_solved_list = []
             pattern = r'```python.*```'
-            for query, result, test, log_prob, cost in zip(queries, results, tests, log_probs, costs):
+            for idx in valid_indices:
+                query = queries[idx]
+                result = results[idx]
+                test = tests[idx]
+                log_prob = log_probs[idx]
+                cost = costs[idx]
                 match = re.search(pattern, result, re.DOTALL|re.MULTILINE)
                 if match:
                     answer = match.group(0).lstrip("```python\n").rstrip("\n```")
@@ -163,20 +208,78 @@ if __name__ == '__main__':
                 is_solved_list.append(is_solved)
                 answer_loss = -log_prob * utility
                 answers_loss.append(answer_loss)
+
+            compact_workflows = getattr(router, "last_compact_workflows", [])
+            if compact_workflows:
+                csv_rows = []
+                for idx, workflow in enumerate(compact_workflows):
+                    if not workflow:
+                        continue
+                    episode_index = episode_counter
+                    episode_counter += 1
+                    item_id = workflow.get("item_id", item_ids[idx] if idx < len(item_ids) else "")
+                    topology = workflow.get("topology", "")
+                    role_set = "-".join(workflow.get("role_set", []))
+                    workflow_latency = float(workflow.get("workflow_latency_seconds", 0.0))
+                    llm_elapsed = float(workflow.get("llm_elapsed_seconds", workflow_latency))
+                    quality_is_solved = int(is_solved_list[idx]) if idx < len(is_solved_list) else 0
+                    base = {
+                        "run_id": run_id,
+                        "epoch": epoch,
+                        "batch_id": i_batch,
+                        "episode_index": episode_index,
+                        "dataset": args.domain,
+                        "split": "train",
+                        "item_id": item_id,
+                        "topology": topology,
+                        "role_set": role_set,
+                        "workflow_latency_seconds": workflow_latency,
+                        "llm_elapsed_seconds": llm_elapsed,
+                        "quality_is_solved": quality_is_solved,
+                    }
+                    csv_rows.append({**base, "record_type": "episode"})
+                    for step in workflow.get("transitions", []):
+                        csv_rows.append(
+                            {
+                                **base,
+                                "record_type": "step",
+                                "step_index": step.get("step_index", ""),
+                                "round_index": step.get("round_index", ""),
+                                "wave_index": step.get("wave_index", ""),
+                                "role_name": step.get("role_name", ""),
+                                "llm_name": step.get("llm_name", ""),
+                                "latency_seconds": step.get("latency_seconds", 0.0),
+                                "llm_elapsed_seconds": step.get("llm_elapsed_seconds", llm_elapsed),
+                            }
+                        )
+                train_writer.append_rows(csv_rows)
             answer_loss = torch.stack(answers_loss).sum() / len(answers_loss)
-            vae_loss = vae_loss.mean()
+            if isinstance(vae_loss, torch.Tensor):
+                if vae_loss.ndim > 0 and vae_loss.shape[0] == len(queries):
+                    vae_loss = vae_loss[valid_mask].mean()
+                else:
+                    vae_loss = vae_loss.mean()
+            else:
+                vae_loss = torch.tensor(vae_loss, device=device).mean()
             is_solved_tensor = torch.tensor(is_solved_list, dtype=torch.float32, device=device).unsqueeze(1)  # shape: [N, 1]
+            if isinstance(agents_num, torch.Tensor) and agents_num.ndim > 0 and agents_num.shape[0] == len(queries):
+                agents_num = agents_num[valid_mask]
             adjust_loss = ((1 - is_solved_tensor) * (router.num_determiner.max_agent - agents_num) + 0.25 * is_solved_tensor *  agents_num).mean()
             
             loss = task_loss + answer_loss + vae_loss*0.001 # + adjust_loss
             loss.backward()
             optimizer.step()
-            accuracy = total_solved / total_executed
+            accuracy = total_solved / total_executed if total_executed else 0.0
 
             logger.info(f"Batch time {time.time() - start_ts:.3f}")
             logger.info(f"Accuracy: {accuracy}")
             logger.info(f"utilities:{utilities}")
-        torch.save(router.state_dict(), f"mbpp_router_epoch{epoch}_new.pth")
+        checkpoint_dir = os.path.join("checkpoints", "mas_router")
+        os.makedirs(checkpoint_dir, exist_ok=True)
+        torch.save(
+            router.state_dict(),
+            os.path.join(checkpoint_dir, f"mbpp_router_epoch{epoch}_new.pth"),
+        )
     logger.info("End training...")
     logger.info("Start testing...")
     total_solved, total_executed = (0, 0)
@@ -222,7 +325,11 @@ if __name__ == '__main__':
                     split="test",
                     batch_id=0,
                     run_id=current_time,
+                    request_timeout=args.request_timeout,
                 )
+            skipped_indices = getattr(router, "last_skipped_indices", set())
+            if 0 in skipped_indices:
+                return None
             return {
                 "query": query,
                 "tests": tests,
@@ -291,6 +398,7 @@ if __name__ == '__main__':
             item_ids = [item["task_id"] for item in current_batch]
             task_labels = [2 for _ in current_batch]
             tasks_y = torch.tensor(task_labels).to(device)
+            # NOTE: request timeout for LLM calls in baseline.
             results, costs, log_probs, tasks_probs, vae_loss, agents_num = router.forward(
                 queries,
                 tasks,
@@ -304,9 +412,16 @@ if __name__ == '__main__':
                 split="test",
                 batch_id=i_batch,
                 run_id=current_time,
+                request_timeout=args.request_timeout,
             )
             utilities = []
-            for item_id, query, result, test, log_prob, cost in zip(item_ids, queries, results, tests, log_probs, costs):
+            skipped_indices = getattr(router, "last_skipped_indices", set())
+            for idx, (item_id, query, result, test, log_prob, cost) in enumerate(
+                zip(item_ids, queries, results, tests, log_probs, costs)
+            ):
+                if idx in skipped_indices:
+                    logger.warning("request_timeout idx={} item_id={}", idx, item_id)
+                    continue
                 eval_start_ts = time.time()
                 match = re.search(pattern, result, re.DOTALL|re.MULTILINE)
                 if match:
@@ -338,7 +453,7 @@ if __name__ == '__main__':
                     ]
                 )
 
-            accuracy = total_solved / total_executed
+            accuracy = total_solved / total_executed if total_executed else 0.0
             logger.info(f"Batch time {time.time() - start_ts:.3f}")
             logger.info(f"Accuracy: {accuracy}")
             logger.info(f"utilities:{utilities}")

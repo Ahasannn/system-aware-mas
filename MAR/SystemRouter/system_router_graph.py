@@ -46,10 +46,10 @@ class SystemRouterGraph(Graph):
             trace.start_workflow()
 
         usage_tracker = LLMUsageTracker.instance()
-        workflow_t0 = time.perf_counter()
         workflow_error = ""
         log_probs = 0
         step_counter = 0
+        llm_elapsed_seconds = 0.0
 
         transitions: Dict[Tuple[int, str], Dict[str, Any]] = {}
         transitions_lock = threading.Lock()
@@ -105,8 +105,7 @@ class SystemRouterGraph(Graph):
                 if router_lock:
                     with router_lock:
                         role_embedding = router.encode_role(role_name)
-                        elapsed = time.perf_counter() - workflow_t0
-                        budget_remaining = max(budget_total - elapsed, 0.0)
+                        budget_remaining = max(budget_total - llm_elapsed_seconds, 0.0)
                         state_vector = system_state_vector
                         if state_vector is None:
                             state_vector = router.get_system_state_vector(query_embedding.dtype)
@@ -116,8 +115,7 @@ class SystemRouterGraph(Graph):
                         exec_action = router.get_executor_action(exec_state, deterministic=deterministic)
                 else:
                     role_embedding = router.encode_role(role_name)
-                    elapsed = time.perf_counter() - workflow_t0
-                    budget_remaining = max(budget_total - elapsed, 0.0)
+                    budget_remaining = max(budget_total - llm_elapsed_seconds, 0.0)
                     state_vector = system_state_vector
                     if state_vector is None:
                         state_vector = router.get_system_state_vector(query_embedding.dtype)
@@ -148,6 +146,7 @@ class SystemRouterGraph(Graph):
                     "model": model_name,
                     "strategy": strategy_name,
                     "budget_remaining": float(budget_remaining),
+                    "llm_elapsed_seconds": float(llm_elapsed_seconds),
                 }
                 step_counter += 1
 
@@ -258,6 +257,15 @@ class SystemRouterGraph(Graph):
                             for future in as_completed(futures):
                                 future.result()
 
+                    wave_max_latency = 0.0
+                    for node_id in current_wave_ids:
+                        transition = transitions.get((round_idx, node_id))
+                        if transition:
+                            latency = float(transition.get("latency_seconds", 0.0))
+                            if latency > wave_max_latency:
+                                wave_max_latency = latency
+                    llm_elapsed_seconds += wave_max_latency
+
                     for node_id in current_wave_ids:
                         for successor in self.nodes[node_id].spatial_successors:
                             if successor.id not in self.nodes.keys():
@@ -336,6 +344,7 @@ class SystemRouterGraph(Graph):
                 "final_response": decision_text,
                 "executor_transitions": ordered_transitions,
                 "workflow_latency_seconds": workflow_latency,
+                "llm_elapsed_seconds": float(llm_elapsed_seconds),
                 "token_counts": token_tally,
                 "log_probs": log_probs,
             }

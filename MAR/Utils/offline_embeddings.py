@@ -2,24 +2,34 @@ import csv
 import json
 import os
 from pathlib import Path
-from typing import Dict, Optional, Union
+from typing import Dict, Optional, Tuple, Union
 
 import torch
 
 
-def load_mbpp_query_embeddings(
+def _normalize_dataset_name(name: object) -> Optional[str]:
+    if name is None:
+        return None
+    value = str(name).strip()
+    if not value:
+        return None
+    return value.lower()
+
+
+def load_query_embeddings(
     path: Union[str, Path],
     *,
     device: torch.device,
     dtype: torch.dtype = torch.float32,
-) -> Dict[int, torch.Tensor]:
+) -> Dict[Tuple[str, int], torch.Tensor]:
     """
-    Load MBPP query embeddings from `Datasets/embeddings/mbpp_query_embeddings.csv`.
+    Load query embeddings from `Datasets/embeddings/query_embeddings.csv`.
 
     Expected columns:
-      - query_id: MBPP task_id (int)
+      - dataset_name
+      - dataset_split (optional for lookup)
+      - query_id
       - embedding: JSON list of floats (384-d for MiniLM-L6-v2)
-      - dataset_name: (optional) should be 'mbpp'
     """
     if not path:
         return {}
@@ -28,13 +38,14 @@ def load_mbpp_query_embeddings(
     if not os.path.isfile(path_str):
         return {}
 
-    embeddings: Dict[int, torch.Tensor] = {}
+    embeddings: Dict[Tuple[str, int], torch.Tensor] = {}
     with open(path_str, newline="", encoding="utf-8") as f:
         reader = csv.DictReader(f)
         for row in reader:
+            dataset_name = _normalize_dataset_name(row.get("dataset_name"))
             raw_id = row.get("query_id")
             raw_emb = row.get("embedding")
-            if raw_id is None or raw_emb is None:
+            if dataset_name is None or raw_id is None or raw_emb is None:
                 continue
             try:
                 query_id = int(raw_id)
@@ -50,7 +61,7 @@ def load_mbpp_query_embeddings(
                 tensor = torch.tensor(values, device=device, dtype=dtype)
             except (TypeError, ValueError):
                 continue
-            embeddings[query_id] = tensor
+            embeddings[(dataset_name, query_id)] = tensor
     return embeddings
 
 
@@ -98,4 +109,3 @@ def load_role_embeddings(
                 continue
             embeddings[role_name] = tensor
     return embeddings
-

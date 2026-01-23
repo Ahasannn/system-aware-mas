@@ -76,6 +76,18 @@ The code below verifies the experimental results of the `mbpp` dataset.
 python experiments/run_mbpp.py
 ```
 
+### 🧭 System-Aware Router training
+
+The System-Aware Router training scripts are now available for multiple datasets:
+
+```bash
+python Experiments/train_system_router_mbpp.py
+python Experiments/train_system_router_gsm8k.py --dataset-path Datasets/gsm8k/gsm8k.jsonl
+python Experiments/train_system_router_math.py --dataset-root Datasets/MATH
+python Experiments/train_system_router_mmlu.py --dataset-root Datasets/MMLU/data
+python Experiments/train_system_router_humaneval.py --dataset-path Datasets/humaneval/humaneval-py.jsonl
+```
+
 ## 📚 Citation
 
 If you find this repo useful, please consider citing our paper as follows:

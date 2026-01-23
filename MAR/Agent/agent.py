@@ -79,7 +79,8 @@ class Agent(Node):
         if passed:
             return response
         prompt = self._process_inputs(input, spatial_info, temporal_info, **kwargs)
-        response = self.llm.gen(prompt)
+        request_timeout = kwargs.get("request_timeout")
+        response = self.llm.gen(prompt, request_timeout=request_timeout)
         response = post_process(input, response, self.post_process)
         logger.trace(f"Agent {self.id} Role: {self.role.role} LLM: {self.llm.model_name}")
         logger.trace(f"system prompt:\n {prompt[0]['content']}")
@@ -122,7 +123,7 @@ class Agent(Node):
             system_prompt += f"Format requirements that must be followed:\n{post_format_prompt}"
             user_prompt = f"{query}\nThe initial thinking information is:\n{response} \n Please refer to the new format requirements when replying."
             prompt = [{'role':'system','content':system_prompt},{'role':'user','content':user_prompt}]
-            response = self.llm.gen(prompt)
+            response = self.llm.gen(prompt, request_timeout=request_timeout)
             logger.trace(f"post system prompt:\n {system_prompt}")
             logger.trace(f"post user prompt:\n {user_prompt}")
             logger.trace(f"post response:\n {response}")
@@ -174,7 +175,8 @@ class FinalRefer(Node):
     
     def _execute(self, input, spatial_info, temporal_info, **kwargs):
         prompt = self._process_inputs(input, spatial_info, temporal_info, **kwargs)
-        response = self.llm.gen(prompt)
+        request_timeout = kwargs.get("request_timeout")
+        response = self.llm.gen(prompt, request_timeout=request_timeout)
         logger.trace(f"Final Refer Node LLM: {self.llm.model_name}")
         logger.trace(f"Final System Prompt:\n {prompt[0]['content']}")
         logger.trace(f"Final User Prompt:\n {prompt[1]['content']}")

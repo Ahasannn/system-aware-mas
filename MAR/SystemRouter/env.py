@@ -4,7 +4,7 @@ import re
 import threading
 from functools import lru_cache
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple, Union
+from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 
 import torch
 
@@ -116,11 +116,13 @@ class SystemRouterEnv:
         metrics_interval: float = 1.0,
         metrics_url_map: Optional[Dict[str, str]] = None,
         request_timeout: float = 120.0,
+        quality_fn: Optional[Callable[[str, Optional[List[str]], Optional[Any]], Tuple[Union[float, torch.Tensor], Dict[str, object]]]] = None,
     ) -> None:
         self.router = router
         self.max_tokens = max_tokens
         self.request_timeout = request_timeout
         self.router_lock = threading.Lock()
+        self.quality_fn = quality_fn
         self.prompt_file = prompt_file or str(
             Path(__file__).resolve().parents[2] / "MAR" / "Roles" / "FinalNode" / "mbpp.json"
         )
@@ -136,15 +138,27 @@ class SystemRouterEnv:
         deterministic: bool = False,
         latency_seed: Optional[str] = None,
         query_id: Optional[object] = None,
+        dataset_name: Optional[str] = None,
+        sample: Optional[Any] = None,
+        quality_fn: Optional[
+            Callable[[str, Optional[List[str]], Optional[Any]], Tuple[Union[float, torch.Tensor], Dict[str, object]]]
+        ] = None,
     ) -> Dict[str, Union[str, float, torch.Tensor, Dict[str, float], List[dict]]]:
         """
         Run one hierarchical episode: planner picks topology/roles, executor runs each role.
+        Tests are required unless a quality_fn is supplied.
         """
-        if not tests:
+        scorer = quality_fn or self.quality_fn
+        if not scorer and not tests:
             raise ValueError("Tests are required for quality scoring; no fallback is used.")
 
         with self.router_lock:
-            plan = self.router.plan_graph(query, deterministic=deterministic, query_id=query_id)
+            plan = self.router.plan_graph(
+                query,
+                deterministic=deterministic,
+                query_id=query_id,
+                dataset_name=dataset_name,
+            )
 
         budget_total = self.router.estimate_initial_budget(query)
 
@@ -184,8 +198,13 @@ class SystemRouterEnv:
         executor_transitions = graph_result["executor_transitions"]
         token_tally = graph_result["token_counts"]
         workflow_latency = graph_result["workflow_latency_seconds"]
+        llm_elapsed_seconds = float(graph_result.get("llm_elapsed_seconds", workflow_latency))
 
-        quality, quality_meta = self._score_quality(final_response, tests)
+        if scorer:
+            quality_value, quality_meta = scorer(final_response, tests, sample)
+            quality = self._normalize_quality(quality_value)
+        else:
+            quality, quality_meta = self._score_quality(final_response, tests)
         for transition in executor_transitions:
             transition["quality"] = float(quality.detach().cpu().item())
             transition["workflow_latency_seconds"] = workflow_latency
@@ -202,11 +221,14 @@ class SystemRouterEnv:
         return {
             "response": final_response,
             "workflow_latency_seconds": workflow_latency,
+            "llm_elapsed_seconds": llm_elapsed_seconds,
             "budget_total": budget_total,
             "token_counts": token_tally,
             "quality": float(quality.detach().cpu().item()),
             "quality_is_solved": quality_meta.get("is_solved"),
             "quality_feedback": quality_meta.get("feedback"),
+            "quality_pred": quality_meta.get("pred"),
+            "quality_gold": quality_meta.get("gold"),
             "topology": plan["topology_name"],
             "role_set": plan["role_set_name"],
             "code_response": final_response,
@@ -222,6 +244,13 @@ class SystemRouterEnv:
         is_solved, feedback, _ = PyExecutor().execute(code, list(tests), timeout=30, verbose=False)
         quality = torch.tensor([1.0 if is_solved else 0.0], device=self.router.device)
         return quality, {"is_solved": bool(is_solved), "feedback": feedback}
+
+    def _normalize_quality(self, quality: Union[float, torch.Tensor]) -> torch.Tensor:
+        if isinstance(quality, torch.Tensor):
+            if quality.dim() == 0:
+                quality = quality.unsqueeze(0)
+            return quality.to(self.router.device)
+        return torch.tensor([float(quality)], device=self.router.device)
 
     def _extract_code(self, response: str) -> str:
         pattern = r"```python(.*?)```"

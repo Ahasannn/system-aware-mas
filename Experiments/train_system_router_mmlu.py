@@ -7,4 +7,4 @@ from MAR.SystemRouter.training import main
 
 
 if __name__ == "__main__":
-    main(default_dataset="mbpp")
+    main(default_dataset="mmlu")

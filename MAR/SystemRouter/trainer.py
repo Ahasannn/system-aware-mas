@@ -83,7 +83,10 @@ class SystemRouterTrainer:
         model_idx = torch.tensor([int(item["action"]["model_index"].item()) for item in batch], device=device)
         strategy_idx = torch.tensor([int(item["action"]["strategy_index"].item()) for item in batch], device=device)
         qualities = torch.tensor([item["quality"] for item in batch], device=device)
-        latencies = torch.tensor([item["latency_seconds"] for item in batch], device=device)
+        latencies = torch.tensor(
+            [float(item.get("workflow_latency_seconds", item.get("latency_seconds", 0.0))) for item in batch],
+            device=device,
+        )
         budgets = torch.tensor([item["budget_remaining"] for item in batch], device=device)
 
         action_out = self.router.get_executor_action(states, deterministic=False)

@@ -20,18 +20,24 @@ def _select_device(device: str) -> str:
     return device
 
 
-def _iter_rows(splits: Iterable[str], field: str) -> List[Tuple[int, str]]:
-    rows: List[Tuple[int, str]] = []
+def _iter_rows(splits: Iterable[str], field: str) -> List[Tuple[str, int, str]]:
+    rows: List[Tuple[str, int, str]] = []
     for split in splits:
         ds = MbppDataset(split)
         df = ds.df
-        if "task_id" not in df.columns:
-            raise RuntimeError(f"MBPP split={split} missing task_id column")
+        if "item_id" in df.columns:
+            id_column = "item_id"
+        elif "task_id" in df.columns:
+            id_column = "task_id"
+        elif "id" in df.columns:
+            id_column = "id"
+        else:
+            raise RuntimeError(f"MBPP split={split} missing item_id/task_id/id column")
         if field not in df.columns:
             raise RuntimeError(f"MBPP split={split} missing {field} column")
-        for task_id, text in zip(df["task_id"].tolist(), df[field].tolist()):
-            rows.append((int(task_id), str(text)))
-    rows.sort(key=lambda item: item[0])
+        for item_id, text in zip(df[id_column].tolist(), df[field].tolist()):
+            rows.append((split, int(item_id), str(text)))
+    rows.sort(key=lambda item: (item[0], item[1]))
     return rows
 
 
@@ -54,8 +60,14 @@ def main() -> None:
     parser.add_argument(
         "--output",
         type=str,
-        default=os.path.join("Datasets", "embeddings", "mbpp_query_embeddings.csv"),
+        default=os.path.join("Datasets", "embeddings", "query_embeddings.csv"),
         help="Output CSV path.",
+    )
+    parser.add_argument(
+        "--dataset-name",
+        type=str,
+        default="mbpp",
+        help="Dataset name to store in the CSV.",
     )
     parser.add_argument(
         "--model",
@@ -87,18 +99,19 @@ def main() -> None:
     device = _select_device(args.device)
     model = SentenceTransformer(args.model, device=device)
 
-    fieldnames = ("query_id", "embedding", "dataset_name")
+    fieldnames = ("dataset_name", "dataset_split", "query_id", "embedding")
     with open(output_path, "w", newline="", encoding="utf-8") as f:
         writer = csv.DictWriter(f, fieldnames=fieldnames)
         writer.writeheader()
 
         batch_size = max(1, int(args.batch_size))
-        dataset_name = "mbpp"
+        dataset_name = args.dataset_name.strip() or "mbpp"
         total = len(rows)
         for start in range(0, total, batch_size):
             batch = rows[start : start + batch_size]
-            batch_ids = [item[0] for item in batch]
-            batch_texts = [item[1] for item in batch]
+            batch_splits = [item[0] for item in batch]
+            batch_ids = [item[1] for item in batch]
+            batch_texts = [item[2] for item in batch]
             embeddings = model.encode(
                 batch_texts,
                 batch_size=batch_size,
@@ -106,12 +119,13 @@ def main() -> None:
                 show_progress_bar=False,
                 normalize_embeddings=False,
             )
-            for query_id, emb in zip(batch_ids, embeddings):
+            for dataset_split, query_id, emb in zip(batch_splits, batch_ids, embeddings):
                 writer.writerow(
                     {
+                        "dataset_name": dataset_name,
+                        "dataset_split": dataset_split,
                         "query_id": query_id,
                         "embedding": json.dumps(emb.tolist()),
-                        "dataset_name": dataset_name,
                     }
                 )
             print(f"wrote {min(start + batch_size, total)}/{total}", flush=True)

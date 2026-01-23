@@ -9,7 +9,7 @@ import torch.nn.functional as F
 from sentence_transformers import SentenceTransformer
 
 from MAR.SystemRouter.metrics_watcher import model_metrics
-from MAR.Utils.offline_embeddings import load_mbpp_query_embeddings, load_role_embeddings
+from MAR.Utils.offline_embeddings import load_query_embeddings, load_role_embeddings
 
 class SemanticEncoder(nn.Module):
     """
@@ -51,7 +51,7 @@ class SystemAwareRouter(nn.Module):
         fixed_budget_sec: float = 60.0,
         lambda_init: float = 0.5,
         device: Optional[torch.device] = None,
-        mbpp_query_embeddings_csv: Optional[str] = None,
+        query_embeddings_csv: Optional[str] = None,
         role_embeddings_csv: Optional[str] = None,
     ) -> None:
         super().__init__()
@@ -83,10 +83,10 @@ class SystemAwareRouter(nn.Module):
         self.latency_dim = len(self.models) * len(self.system_metric_keys)  # system metrics per model
         self.encoder = SemanticEncoder(device=self.device)
         embeddings_dir = Path(__file__).resolve().parents[2] / "Datasets" / "embeddings"
-        mbpp_csv = mbpp_query_embeddings_csv or str(embeddings_dir / "mbpp_query_embeddings.csv")
+        query_csv = query_embeddings_csv or str(embeddings_dir / "query_embeddings.csv")
         roles_csv = role_embeddings_csv or str(embeddings_dir / "role_embeddings.csv")
-        self.offline_mbpp_query_embeddings = load_mbpp_query_embeddings(
-            mbpp_csv, device=self.device, dtype=torch.float32
+        self.offline_query_embeddings = load_query_embeddings(
+            query_csv, device=self.device, dtype=torch.float32
         )
         self.offline_role_embeddings = load_role_embeddings(roles_csv, device=self.device, dtype=torch.float32)
 
@@ -124,14 +124,20 @@ class SystemAwareRouter(nn.Module):
         self.lagrange_multiplier = nn.Parameter(torch.tensor(lambda_init, device=self.device))
         self.to(self.device)
 
-    def encode_query(self, query: str, query_id: Optional[object] = None) -> torch.Tensor:
-        if query_id is not None:
+    def encode_query(
+        self,
+        query: str,
+        query_id: Optional[object] = None,
+        dataset_name: Optional[str] = None,
+    ) -> torch.Tensor:
+        dataset_key = str(dataset_name).strip().lower() if dataset_name is not None else ""
+        if query_id is not None and dataset_key:
             try:
                 query_id_int = int(query_id)
             except (TypeError, ValueError):
                 query_id_int = None
             if query_id_int is not None:
-                cached = self.offline_mbpp_query_embeddings.get(query_id_int)
+                cached = self.offline_query_embeddings.get((dataset_key, query_id_int))
                 if cached is not None:
                     return cached
         return self.encoder([query])[0]
@@ -146,9 +152,13 @@ class SystemAwareRouter(nn.Module):
         return self.encoder([json.dumps(profile)])[0]
 
     def plan_graph(
-        self, query: str, deterministic: bool = False, query_id: Optional[object] = None
+        self,
+        query: str,
+        deterministic: bool = False,
+        query_id: Optional[object] = None,
+        dataset_name: Optional[str] = None,
     ) -> Dict[str, Union[str, int, torch.Tensor, List[str]]]:
-        query_embedding = self.encode_query(query, query_id=query_id)
+        query_embedding = self.encode_query(query, query_id=query_id, dataset_name=dataset_name)
         hidden = self.planner_backbone(query_embedding.unsqueeze(0))
         topology_logits = self.topology_head(hidden)
         role_logits = self.role_head(hidden)

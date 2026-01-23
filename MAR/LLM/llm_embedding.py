@@ -4,7 +4,7 @@ from typing import Iterable, List, Optional
 from sentence_transformers import SentenceTransformer
 import torch
 
-from MAR.Utils.offline_embeddings import load_mbpp_query_embeddings
+from MAR.Utils.offline_embeddings import load_query_embeddings
 
 def get_sentence_embedding(sentence):
     model = SentenceTransformer('sentence-transformers/all-MiniLM-L6-v2')
@@ -12,17 +12,22 @@ def get_sentence_embedding(sentence):
     return torch.tensor(embeddings)
 
 class SentenceEncoder(torch.nn.Module):
-    def __init__(self, device=None, mbpp_query_embeddings_csv: Optional[str] = None):
+    def __init__(self, device=None, query_embeddings_csv: Optional[str] = None):
         super().__init__()
         self.device = device if device else ('cuda' if torch.cuda.is_available() else 'cpu')
         self.model = SentenceTransformer('sentence-transformers/all-MiniLM-L6-v2', device=self.device)
         embeddings_dir = Path(__file__).resolve().parents[2] / "Datasets" / "embeddings"
-        mbpp_path = mbpp_query_embeddings_csv or str(embeddings_dir / "mbpp_query_embeddings.csv")
-        self.offline_mbpp_query_embeddings = load_mbpp_query_embeddings(
-            mbpp_path, device=torch.device(self.device), dtype=torch.float32
+        query_path = query_embeddings_csv or str(embeddings_dir / "query_embeddings.csv")
+        self.offline_query_embeddings = load_query_embeddings(
+            query_path, device=torch.device(self.device), dtype=torch.float32
         )
         
-    def forward(self, sentence, query_ids: Optional[Iterable[object]] = None):
+    def forward(
+        self,
+        sentence,
+        query_ids: Optional[Iterable[object]] = None,
+        dataset_name: Optional[str] = None,
+    ):
         if isinstance(sentence, str):
             sentences: List[str] = [sentence]
         else:
@@ -31,7 +36,7 @@ class SentenceEncoder(torch.nn.Module):
         if len(sentences) == 0:
             return torch.tensor([]).to(self.device)
 
-        if query_ids is None:
+        if query_ids is None or dataset_name is None:
             embeddings = self.model.encode(sentences, convert_to_tensor=True, device=self.device)
             # sentence-transformers may run under torch.inference_mode(), producing inference tensors.
             # Convert to a normal tensor so downstream trainable modules can save it for backward.
@@ -39,6 +44,11 @@ class SentenceEncoder(torch.nn.Module):
 
         ids = list(query_ids)
         if len(ids) != len(sentences):
+            embeddings = self.model.encode(sentences, convert_to_tensor=True, device=self.device)
+            return embeddings.clone()
+
+        dataset_key = str(dataset_name).strip().lower() if dataset_name is not None else ""
+        if not dataset_key:
             embeddings = self.model.encode(sentences, convert_to_tensor=True, device=self.device)
             return embeddings.clone()
 
@@ -52,7 +62,7 @@ class SentenceEncoder(torch.nn.Module):
             except (TypeError, ValueError):
                 query_id_int = None
             if query_id_int is not None:
-                cached = self.offline_mbpp_query_embeddings.get(query_id_int)
+                cached = self.offline_query_embeddings.get((dataset_key, query_id_int))
             if cached is not None:
                 embeddings_out[idx] = cached
             else:
