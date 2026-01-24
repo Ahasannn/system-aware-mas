@@ -134,9 +134,9 @@ mkdir -p "${CHECKPOINT_DIR}"
 # Run training with LIMITED samples for testing
 python Experiments/run_mbpp.py \
   --epochs 1 \
-  --batch_size 16 \
+  --batch_size 2 \
   --lr 0.01 \
-  --train_limit 10 \
+  --train_limit 6 \
   --test_limit 1 \
   --train-telemetry-csv logs/test_train_output_${SLURM_JOB_ID}.csv \
   --save-checkpoint "${CHECKPOINT_DIR}/mas_mbpp_test_${SLURM_JOB_ID}.pth" \
