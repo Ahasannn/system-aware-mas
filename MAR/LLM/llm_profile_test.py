@@ -1,24 +1,34 @@
-llm_profile = [
-    {
-        "Name": "Qwen/Qwen2.5-3B-Instruct",
-        "Description": (
-            "Qwen2.5-3B-Instruct is an instruction-tuned model from the Qwen2.5 family (3.09B parameters). "
-            "The Qwen2.5 series emphasizes improved knowledge, instruction following, coding and math, structured outputs, "
-            "and long-context support. Context length is reported as up to 32,768 tokens (with generation up to ~8K)."
-        ),
-    },
-    {
-        "Name": "meta-llama/Llama-3.2-3B-Instruct",
-        "Description": (
-            "Llama-3.2-3B-Instruct is a 3B-parameter instruction-tuned model from Meta's Llama 3.2 family, "
-            "intended for chat and general text generation."
-        ),
-    },
-    {
-        "Name": "mistralai/Mistral-7B-Instruct-v0.3",
-        "Description": (
-            "Mistral-7B-Instruct-v0.3 is an instruct fine-tuned version of Mistral-7B-v0.3 (7B parameters). "
-            "The v0.3 release extends the vocabulary (32,768), uses the v3 tokenizer, and adds support for function calling."
-        ),
-    },
-]
+import json
+from pathlib import Path
+from typing import Dict, List
+
+_PROFILE_PATH = Path(__file__).with_suffix(".json")
+_PROFILE_DATA = {}
+if _PROFILE_PATH.is_file():
+    try:
+        with _PROFILE_PATH.open("r", encoding="utf-8") as file:
+            _PROFILE_DATA = json.load(file)
+    except (OSError, json.JSONDecodeError):
+        _PROFILE_DATA = {}
+
+llm_profile: List[Dict[str, str]] = _PROFILE_DATA.get("models", [])
+
+DEFAULT_MAX_MODEL_LEN: int = _PROFILE_DATA.get("default_max_model_len", 4096)
+_MAX_MODEL_LEN_MAP = {
+    entry.get("Name"): entry.get("MaxModelLen", DEFAULT_MAX_MODEL_LEN)
+    for entry in llm_profile
+    if isinstance(entry, dict)
+}
+
+DEFAULT_MAX_OUTPUT_TOKENS: int = _PROFILE_DATA.get("default_max_output_tokens", 512)
+_MAX_OUTPUT_TOKENS_MAP = {
+    entry.get("Name"): entry.get("MaxOutputTokens", DEFAULT_MAX_OUTPUT_TOKENS)
+    for entry in llm_profile
+    if isinstance(entry, dict)
+}
+
+def get_model_max_context_len(model_name: str) -> int:
+    return _MAX_MODEL_LEN_MAP.get(model_name, DEFAULT_MAX_MODEL_LEN)
+
+def get_model_max_output_tokens(model_name: str) -> int:
+    return _MAX_OUTPUT_TOKENS_MAP.get(model_name, DEFAULT_MAX_OUTPUT_TOKENS)

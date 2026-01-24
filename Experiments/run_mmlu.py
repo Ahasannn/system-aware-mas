@@ -60,8 +60,6 @@ def parse_args():
     parser.add_argument('--start_epoch', type=int, default=0)
     parser.add_argument('--cost_rate', type=float, default=500.0)
     parser.add_argument('--max_agent', type=int, default=6)
-    parser.add_argument('--variant', type=str, default='baseline', choices=['baseline', 'modified'],
-                        help="Run variant: baseline (static LLMs) or modified (runtime LLMs + latency budget).")
     args = parser.parse_args()
     return args
 
@@ -116,7 +114,6 @@ if __name__ == '__main__':
                 reasonings,
                 task_labels,
                 prompt_file=args.prompt_file,
-                variant=args.variant,
             )
             task_loss = F.cross_entropy(tasks_probs, tasks_y)
             utilities = []
@@ -192,7 +189,6 @@ if __name__ == '__main__':
             split="test",
             batch_id=i_batch,
             run_id=current_time,
-            variant=args.variant,
         )
         utilities = []
         answers_loss = []

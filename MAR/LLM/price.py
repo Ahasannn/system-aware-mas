@@ -2,16 +2,32 @@ from MAR.Utils.globals import Cost, PromptTokens, CompletionTokens
 from MAR.Utils.telemetry import LLMUsageTracker
 import tiktoken
 import threading
+from functools import lru_cache
 # GPT-4:  https://platform.openai.com/docs/models/gpt-4-and-gpt-4-turbo
 # GPT3.5: https://platform.openai.com/docs/models/gpt-3-5
 # DALL-E: https://openai.com/pricing
-
 _GLOBAL_COUNTER_LOCK = threading.Lock()
 
+@lru_cache(maxsize=32)
+def _encoder_for_model(model_name: str):
+    try:
+        return tiktoken.encoding_for_model(model_name)
+    except Exception:
+        return tiktoken.get_encoding("cl100k_base")
+
 def cal_token(model:str, text:str):
-    encoder = tiktoken.encoding_for_model('gpt-4o')
+    encoder = _encoder_for_model(model or "gpt-4o")
     num_tokens = len(encoder.encode(text))
     return num_tokens
+
+def truncate_text_for_model(text: str, max_tokens: int, model_name: str) -> str:
+    if max_tokens <= 0:
+        return ""
+    encoder = _encoder_for_model(model_name or "gpt-4o")
+    token_ids = encoder.encode(text)
+    if len(token_ids) <= max_tokens:
+        return text
+    return encoder.decode(token_ids[-max_tokens:])
 
 def cost_count(prompt, response, model_name):
     prompt_len: int

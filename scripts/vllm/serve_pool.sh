@@ -36,6 +36,39 @@ VLLM_GPU1_MEMORY_UTILIZATION="${VLLM_GPU1_MEMORY_UTILIZATION:-${VLLM_BIG_GPU_MEM
 VLLM_SMALL_MAX_MODEL_LEN="${VLLM_SMALL_MAX_MODEL_LEN:-4096}"
 VLLM_BIG_MAX_MODEL_LEN="${VLLM_BIG_MAX_MODEL_LEN:-8192}"
 
+LLM_PROFILE_JSON="${LLM_PROFILE_JSON:-${ROOT_DIR}/MAR/LLM/llm_profile_full.json}"
+VLLM_LLAMA_MAX_LEN="${VLLM_LLAMA_MAX_LEN:-}"
+VLLM_QWEN_MAX_LEN="${VLLM_QWEN_MAX_LEN:-}"
+VLLM_MISTRAL_MAX_LEN="${VLLM_MISTRAL_MAX_LEN:-}"
+
+_get_model_max_len() {
+  local model_name="$1"
+  python - <<PY "$model_name"
+import json
+from pathlib import Path
+import sys
+
+path = Path("$LLM_PROFILE_JSON")
+default_len = 4096
+try:
+    data = json.loads(path.read_text(encoding="utf-8"))
+    default_len = int(data.get("default_max_model_len", default_len))
+except Exception:
+    print(default_len)
+    sys.exit(0)
+
+for entry in data.get("models", []):
+    if isinstance(entry, dict) and entry.get("Name") == model_name:
+        print(entry.get("MaxModelLen", entry.get("max_model_len", default_len)))
+        sys.exit(0)
+print(default_len)
+PY
+}
+
+LLAMA_MAX_LEN="${VLLM_LLAMA_MAX_LEN:-$(_get_model_max_len "meta-llama/Llama-3.2-3B-Instruct")}"
+QWEN_MAX_LEN="${VLLM_QWEN_MAX_LEN:-$(_get_model_max_len "Qwen/Qwen2.5-3B-Instruct")}"
+MISTRAL_MAX_LEN="${VLLM_MISTRAL_MAX_LEN:-$(_get_model_max_len "mistralai/Mistral-7B-Instruct-v0.3")}"
+
 # Per-model overrides (optional).
 # If you set these, ensure GPU0 values sum to <= ~0.85 for headroom.
 VLLM_LLAMA_GPU_MEMORY_UTILIZATION="${VLLM_LLAMA_GPU_MEMORY_UTILIZATION:-${VLLM_GPU0_MEMORY_UTILIZATION}}"
@@ -52,6 +85,31 @@ VLLM_API_KEY="${VLLM_API_KEY:-}"
 # Some models may require remote code; default is off for safety.
 VLLM_TRUST_REMOTE_CODE="${VLLM_TRUST_REMOTE_CODE:-0}"
 
+# Read model URLs from the LLM profile (model_base_urls section)
+_get_model_url() {
+  local model_name="$1"
+  python - <<PY "$model_name"
+import json
+from pathlib import Path
+import sys
+
+path = Path("$LLM_PROFILE_JSON")
+try:
+    data = json.loads(path.read_text(encoding="utf-8"))
+    urls = data.get("model_base_urls", {})
+    url = urls.get(sys.argv[1], "")
+    print(url)
+except Exception:
+    print("")
+PY
+}
+
+_get_port_from_url() {
+  local url="$1"
+  echo "$url" | sed -n 's|.*:\([0-9]*\)/.*|\1|p'
+}
+
+# Legacy: also write to model_base_urls.json for backward compatibility
 MODEL_BASE_URLS_FILE="${MODEL_BASE_URLS_FILE:-${LOG_DIR}/model_base_urls.json}"
 
 cat >"${MODEL_BASE_URLS_FILE}" <<EOF
@@ -158,13 +216,13 @@ start_server() {
   echo "[vLLM] ${name} pid $(cat "${pidfile}") (log: ${logfile})"
 }
 
-start_server "llama_3b" "${VLLM_GPU0}" "meta-llama/Llama-3.2-3B-Instruct" "${VLLM_LLAMA_PORT}" "${VLLM_LLAMA_GPU_MEMORY_UTILIZATION}" "${VLLM_SMALL_MAX_MODEL_LEN}"
+start_server "llama_3b" "${VLLM_GPU0}" "meta-llama/Llama-3.2-3B-Instruct" "${VLLM_LLAMA_PORT}" "${VLLM_LLAMA_GPU_MEMORY_UTILIZATION}" "${LLAMA_MAX_LEN}"
 wait_for_health "llama_3b" "${VLLM_LLAMA_PORT}"
 
-start_server "qwen_3b" "${VLLM_GPU0}" "Qwen/Qwen2.5-3B-Instruct" "${VLLM_QWEN_PORT}" "${VLLM_QWEN_GPU_MEMORY_UTILIZATION}" "${VLLM_SMALL_MAX_MODEL_LEN}"
+start_server "qwen_3b" "${VLLM_GPU0}" "Qwen/Qwen2.5-3B-Instruct" "${VLLM_QWEN_PORT}" "${VLLM_QWEN_GPU_MEMORY_UTILIZATION}" "${QWEN_MAX_LEN}"
 wait_for_health "qwen_3b" "${VLLM_QWEN_PORT}"
 
-start_server "mistral_7b" "${VLLM_GPU1}" "mistralai/Mistral-7B-Instruct-v0.3" "${VLLM_MISTRAL_PORT}" "${VLLM_MISTRAL_GPU_MEMORY_UTILIZATION}" "${VLLM_BIG_MAX_MODEL_LEN}" "mistral"
+start_server "mistral_7b" "${VLLM_GPU1}" "mistralai/Mistral-7B-Instruct-v0.3" "${VLLM_MISTRAL_PORT}" "${VLLM_MISTRAL_GPU_MEMORY_UTILIZATION}" "${MISTRAL_MAX_LEN}" "mistral"
 wait_for_health "mistral_7b" "${VLLM_MISTRAL_PORT}"
 
 echo ""

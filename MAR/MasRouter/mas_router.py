@@ -1,4 +1,5 @@
 from typing import List, Dict, Optional
+from concurrent.futures import ThreadPoolExecutor, as_completed
 import os
 import json
 import uuid
@@ -11,7 +12,6 @@ import math
 from MAR.LLM.llm_embedding import SentenceEncoder
 from MAR.Graph.graph import Graph
 from MAR.Utils.utils import get_kwargs, plot_embedding_heatmap, plot_row_similarity
-from MAR.Utils.globals import Cost
 from MAR.Utils.telemetry import CsvTelemetryWriter, GraphTrace
 from loguru import logger
 
@@ -100,6 +100,21 @@ class MasRouter(nn.Module):
         self.num_determiner = NumDeterminer(input_dim = in_dim, hidden_dim=hidden_dim,max_agent=max_agent, device=self.device)
         self.role_allocation = RoleAllocation(input_dim = in_dim, context_input_dim = 2* hidden_dim, hidden_dim=hidden_dim,device=self.device,temp=temp)
         self.llm_router = LLMRouter(device=self.device,max_agent=max_agent,temp=1.0)
+        # Cache static embeddings and role databases; these are pure inputs and don't need recomputing
+        # on every batch/forward.
+        self._cached_task_role_database = None
+        self._cached_task_role_emb = None
+        self._cached_tasks_key = None
+        self._cached_tasks_embedding = None
+        self._cached_llms_key = None
+        self._cached_llms_embedding = None
+        self._cached_collabs_key = None
+        self._cached_collabs_embedding = None
+
+    def _get_cached_roles(self):
+        if self._cached_task_role_database is None or self._cached_task_role_emb is None:
+            self._cached_task_role_database, self._cached_task_role_emb = self.encoder_roles()
+        return self._cached_task_role_database, self._cached_task_role_emb
 
     def forward(self, queries:List[str], tasks:List[Dict[str, str]], 
                 llms: List[Dict[str, str]], collabs:List[Dict[str, str]], given_task: Optional[List[int]] = None, 
@@ -110,7 +125,7 @@ class MasRouter(nn.Module):
                 split: Optional[str] = None,
                 batch_id: Optional[int] = None,
                 run_id: Optional[str] = None,
-                variant: str = "baseline"):
+                request_timeout: Optional[float] = None):
         """
         queries:List[Dict[str, str]]: List of queries
         tasks:List[Dict[str, str]]: List of tasks
@@ -121,13 +136,31 @@ class MasRouter(nn.Module):
         tasks_list = self._preprocess_data(tasks)
         llms_list = self._preprocess_data(llms)
         collabs_list = self._preprocess_data(collabs)
-        task_role_database, task_role_emb = self.encoder_roles() # task_role_database: Dict[str, List[Dict[str, str]]], task_role_emb: Dict[str, torch.Tensor]
+        task_role_database, task_role_emb = self._get_cached_roles() # role DB + embeddings are static for a run
 
         # Text embedding
-        queries_embedding = self.text_encoder(queries) # N_q*d tensor, N_q is the number of queries, d is the dimension of each query
-        tasks_embedding = self.text_encoder(tasks_list) # N_t*d tensor, N_t is the number of tasks, d is the dimension of each task
-        llms_embedding = self.text_encoder(llms_list) # N_l*d tensor, N_l is the number of llms, d is the dimension of each llm
-        collabs_embedding = self.text_encoder(collabs_list) # N_r*d tensor, N_r is the number of collabs, d is the dimension of each collab
+        use_offline = item_ids is not None and dataset is not None
+        if use_offline:
+            queries_embedding = self.text_encoder(queries, query_ids=item_ids, dataset_name=dataset)
+        else:
+            queries_embedding = self.text_encoder(queries) # N_q*d tensor, N_q is the number of queries, d is the dimension of each query
+        tasks_key = tuple(tasks_list)
+        if self._cached_tasks_embedding is None or self._cached_tasks_key != tasks_key:
+            self._cached_tasks_embedding = self.text_encoder(tasks_list).to(self.device)
+            self._cached_tasks_key = tasks_key
+        tasks_embedding = self._cached_tasks_embedding
+
+        llms_key = tuple(llms_list)
+        if self._cached_llms_embedding is None or self._cached_llms_key != llms_key:
+            self._cached_llms_embedding = self.text_encoder(llms_list).to(self.device)
+            self._cached_llms_key = llms_key
+        llms_embedding = self._cached_llms_embedding
+
+        collabs_key = tuple(collabs_list)
+        if self._cached_collabs_embedding is None or self._cached_collabs_key != collabs_key:
+            self._cached_collabs_embedding = self.text_encoder(collabs_list).to(self.device)
+            self._cached_collabs_key = collabs_key
+        collabs_embedding = self._cached_collabs_embedding
         
         # Task classification
         selected_tasks_idx, tasks_probs, query_context = self.task_classifier(queries_embedding, tasks_embedding) # N_q, N_q*1，N_q*hidden_dim
@@ -153,25 +186,21 @@ class MasRouter(nn.Module):
 
         vae_loss = collab_vae_loss + num_vae_loss + role_vae_loss + llm_vae_loss
 
-        final_result = []
-        costs = []
+        final_result = ["" for _ in range(len(queries))]
+        costs = [0.0 for _ in range(len(queries))]
+        compact_workflows = [None for _ in range(len(queries))]
         telemetry_writer = CsvTelemetryWriter(telemetry_path) if telemetry_path else None
-        variant = (variant or "baseline").strip().lower()
-        runtime_llm_assignment = variant == "modified"
-        latency_budget = "medium" if variant == "modified" else None
+        runtime_llm_assignment = False
+        latency_budget = None
         run_id = run_id or uuid.uuid4().hex[:8]
+        entries = []
         for i, (query, task, llms, collab, roles) in enumerate(
             zip(queries, selected_tasks, selected_llms, selected_collabs, selected_roles)
         ):
-            previous_cost = Cost.instance().value
-            kwargs = get_kwargs(collab['Name'], len(llms))
-            llm_names = [llm['Name'] for llm in llms]
-            role_names = [role['Name'] for role in roles]
-            item_id = ""
-            if item_ids is not None and i < len(item_ids):
-                item_id = str(item_ids[i])
-            else:
-                item_id = str(i)
+            kwargs = get_kwargs(collab["Name"], len(llms))
+            llm_names = [llm["Name"] for llm in llms]
+            role_names = [role["Name"] for role in roles]
+            item_id = str(item_ids[i]) if item_ids is not None and i < len(item_ids) else str(i)
             router_log_prob = float(log_probs[i].detach().cpu().item()) if isinstance(log_probs, torch.Tensor) else ""
             router_agent_num_pred = float(agent_num_float[i].detach().cpu().item()) if isinstance(agent_num_float, torch.Tensor) else ""
             router_task_probs_json = ""
@@ -181,18 +210,48 @@ class MasRouter(nn.Module):
                     router_task_probs_json = [{"task": tasks[j]["Name"], "prob": float(prob)} for j, prob in enumerate(task_probs)]
             except Exception:
                 router_task_probs_json = ""
+            entries.append(
+                {
+                    "index": i,
+                    "query": query,
+                    "task": task,
+                    "collab": collab,
+                    "llm_names": llm_names,
+                    "role_names": role_names,
+                    "item_id": item_id,
+                    "kwargs": kwargs,
+                    "router_log_prob": router_log_prob,
+                    "router_agent_num_pred": router_agent_num_pred,
+                    "router_task_probs_json": router_task_probs_json,
+                }
+            )
+
+        def run_entry(entry: Dict[str, object]):
+            query = entry["query"]
+            task = entry["task"]
+            collab = entry["collab"]
+            llm_names = entry["llm_names"]
+            role_names = entry["role_names"]
+            item_id = entry["item_id"]
+            kwargs = entry["kwargs"]
+            router_log_prob = entry["router_log_prob"]
+            router_agent_num_pred = entry["router_agent_num_pred"]
+            router_task_probs_json = entry["router_task_probs_json"]
+
             logger.info(f'Query: {query}')
             logger.info(f'Task: {task["Name"]}')
             logger.info(f'LLMs: {llm_names}')
             logger.info(f'Reasoning: {collab["Name"]}')
             logger.info(f'Roles: {role_names}')
             logger.info('-----------------------------------')
-            trace = GraphTrace() if telemetry_writer is not None else None
+
+            trace = GraphTrace()
             workflow_error = ""
             graph_id = ""
+            final_output = ""
+            workflow_latency = 0.0
+            transitions = []
             try:
-                if trace is not None:
-                    trace.start_workflow()
                 g = Graph(
                     domain=task["Name"],
                     llm_names=llm_names,
@@ -204,15 +263,23 @@ class MasRouter(nn.Module):
                     latency_budget=latency_budget,
                     **kwargs,
                 )
-                self.g = g
                 graph_id = getattr(g, "id", "")
-                final_result.append(g.run(inputs={"query": query}, num_rounds=kwargs["num_rounds"], trace=trace)[0][0])
-                costs.append(Cost.instance().value - previous_cost)
+                final_output = g.run(
+                    inputs={"query": query},
+                    num_rounds=kwargs["num_rounds"],
+                    trace=trace,
+                    request_timeout=request_timeout,
+                )[0][0]
+                workflow_latency = float(getattr(g, "last_llm_elapsed_seconds", 0.0))
+                transitions = getattr(g, "last_transitions", [])
+            except TimeoutError as e:
+                workflow_error = str(e)
+                final_output = None
             except Exception as e:
                 workflow_error = str(e)
                 raise
             finally:
-                if telemetry_writer is not None and trace is not None:
+                if telemetry_writer is not None:
                     trace.end_workflow(success=(workflow_error == ""), error=workflow_error)
                     workflow = trace.workflow_timing() or {}
 
@@ -286,6 +353,47 @@ class MasRouter(nn.Module):
 
                     telemetry_writer.append_rows([workflow_row, *node_rows])
 
+            cost_delta = float(sum(event.cost_delta for event in trace.node_events))
+            compact = {
+                "item_id": item_id,
+                "topology": collab["Name"],
+                "role_set": role_names,
+                "workflow_latency_seconds": workflow_latency,
+                "llm_elapsed_seconds": workflow_latency,
+                "transitions": transitions,
+            }
+            return entry["index"], final_output, cost_delta, compact
+
+        skipped_indices = set()
+        if len(entries) > 1:
+            with ThreadPoolExecutor(max_workers=len(entries)) as executor:
+                futures = [executor.submit(run_entry, entry) for entry in entries]
+                for future in as_completed(futures):
+                    idx, output, cost_delta, compact = future.result()
+                    if output is None:
+                        skipped_indices.add(idx)
+                        final_result[idx] = ""
+                        costs[idx] = 0.0
+                        compact_workflows[idx] = None
+                    else:
+                        final_result[idx] = output
+                        costs[idx] = cost_delta
+                        compact_workflows[idx] = compact
+        else:
+            for entry in entries:
+                idx, output, cost_delta, compact = run_entry(entry)
+                if output is None:
+                    skipped_indices.add(idx)
+                    final_result[idx] = ""
+                    costs[idx] = 0.0
+                    compact_workflows[idx] = None
+                else:
+                    final_result[idx] = output
+                    costs[idx] = cost_delta
+                    compact_workflows[idx] = compact
+
+        self.last_compact_workflows = [wf for wf in compact_workflows if wf is not None]
+        self.last_skipped_indices = skipped_indices
         return final_result, costs, log_probs, tasks_probs, vae_loss, agent_num_float
     
     def _preprocess_data(self, raw_data:List[Dict[str, str]]):

@@ -64,7 +64,8 @@ If you want to run a small open-source model pool locally (e.g., multiple vLLM O
 
 For convenience, MasRouter will automatically look for a per-model base URL mapping at:
 - `config_test.json` (recommended); or
-- `logs/vllm/model_base_urls.json` (written by `scripts/vllm/serve_pool.sh`).
+- `MAR/LLM/llm_profile_full.json` (contains model profiles and URLs); or
+- `logs/vllm/model_base_urls.json` (legacy, written by `scripts/vllm/serve_pool.sh`).
 
 So you typically do **not** need to manually `export MODEL_BASE_URLS=...` for local testing.
 
@@ -74,6 +75,18 @@ The code below verifies the experimental results of the `mbpp` dataset.
 
 ```bash
 python experiments/run_mbpp.py
+```
+
+### 🧭 System-Aware Router training
+
+The System-Aware Router training scripts are now available for multiple datasets:
+
+```bash
+python Experiments/train_system_router_mbpp.py
+python Experiments/train_system_router_gsm8k.py --dataset-path Datasets/gsm8k/gsm8k.jsonl
+python Experiments/train_system_router_math.py --dataset-root Datasets/MATH
+python Experiments/train_system_router_mmlu.py --dataset-root Datasets/MMLU/data
+python Experiments/train_system_router_humaneval.py --dataset-path Datasets/humaneval/humaneval-py.jsonl
 ```
 
 ## 📚 Citation

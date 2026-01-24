@@ -1,5 +1,4 @@
 import json
-import random
 import runpy
 from pathlib import Path
 from typing import Dict, List, Optional, Union
@@ -9,6 +8,8 @@ import torch.nn as nn
 import torch.nn.functional as F
 from sentence_transformers import SentenceTransformer
 
+from MAR.SystemRouter.metrics_watcher import model_metrics
+from MAR.Utils.offline_embeddings import load_query_embeddings, load_role_embeddings
 
 class SemanticEncoder(nn.Module):
     """
@@ -35,7 +36,7 @@ class SystemAwareRouter(nn.Module):
       - Executor: selects (LLM, strategy) per role during runtime.
 
     Planner state: query embedding only.
-    Executor state: [query_emb || role_emb || B_rem || latency_estimates].
+    Executor state: [query_emb || role_emb || B_rem || system_metrics].
     """
 
     def __init__(
@@ -50,11 +51,13 @@ class SystemAwareRouter(nn.Module):
         fixed_budget_sec: float = 60.0,
         lambda_init: float = 0.5,
         device: Optional[torch.device] = None,
+        query_embeddings_csv: Optional[str] = None,
+        role_embeddings_csv: Optional[str] = None,
     ) -> None:
         super().__init__()
         self.device = device if device is not None else torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-        # Defaults align with the local vLLM test pool (see `config_test.json` / `logs/vllm/model_base_urls.json`).
+        # Defaults align with the local vLLM test pool (see `config_test.json` / `MAR/LLM/llm_profile_full.json`).
         self.models = models or [
             "Qwen/Qwen2.5-3B-Instruct",
             "meta-llama/Llama-3.2-3B-Instruct",
@@ -69,8 +72,23 @@ class SystemAwareRouter(nn.Module):
         self.role_set_names = ["-".join(role_set) for role_set in self.role_sets]
         self.fixed_budget_sec = float(fixed_budget_sec)
 
-        self.latency_dim = len(self.models) * 2  # TTFT + TPOT per model
+        self.system_metric_keys = [
+            "num_requests_running",
+            "num_requests_waiting",
+            "kv_cache_usage_perc",
+            "ttft_avg",
+            "itl_avg",
+            "e2e_avg",
+        ]
+        self.latency_dim = len(self.models) * len(self.system_metric_keys)  # system metrics per model
         self.encoder = SemanticEncoder(device=self.device)
+        embeddings_dir = Path(__file__).resolve().parents[2] / "Datasets" / "embeddings"
+        query_csv = query_embeddings_csv or str(embeddings_dir / "query_embeddings.csv")
+        roles_csv = role_embeddings_csv or str(embeddings_dir / "role_embeddings.csv")
+        self.offline_query_embeddings = load_query_embeddings(
+            query_csv, device=self.device, dtype=torch.float32
+        )
+        self.offline_role_embeddings = load_role_embeddings(roles_csv, device=self.device, dtype=torch.float32)
 
         if embedding_dim != self.encoder.embedding_dim:
             raise ValueError(
@@ -106,17 +124,41 @@ class SystemAwareRouter(nn.Module):
         self.lagrange_multiplier = nn.Parameter(torch.tensor(lambda_init, device=self.device))
         self.to(self.device)
 
-    def encode_query(self, query: str) -> torch.Tensor:
+    def encode_query(
+        self,
+        query: str,
+        query_id: Optional[object] = None,
+        dataset_name: Optional[str] = None,
+    ) -> torch.Tensor:
+        dataset_key = str(dataset_name).strip().lower() if dataset_name is not None else ""
+        if query_id is not None and dataset_key:
+            try:
+                query_id_int = int(query_id)
+            except (TypeError, ValueError):
+                query_id_int = None
+            if query_id_int is not None:
+                cached = self.offline_query_embeddings.get((dataset_key, query_id_int))
+                if cached is not None:
+                    return cached
         return self.encoder([query])[0]
 
     def encode_role(self, role: str) -> torch.Tensor:
+        cached = self.offline_role_embeddings.get(role)
+        if cached is not None:
+            return cached
         profile = self.role_profiles.get(role)
         if profile is None:
             return self.encoder([role])[0]
         return self.encoder([json.dumps(profile)])[0]
 
-    def plan_graph(self, query: str, deterministic: bool = False) -> Dict[str, Union[str, int, torch.Tensor, List[str]]]:
-        query_embedding = self.encode_query(query)
+    def plan_graph(
+        self,
+        query: str,
+        deterministic: bool = False,
+        query_id: Optional[object] = None,
+        dataset_name: Optional[str] = None,
+    ) -> Dict[str, Union[str, int, torch.Tensor, List[str]]]:
+        query_embedding = self.encode_query(query, query_id=query_id, dataset_name=dataset_name)
         hidden = self.planner_backbone(query_embedding.unsqueeze(0))
         topology_logits = self.topology_head(hidden)
         role_logits = self.role_head(hidden)
@@ -155,10 +197,10 @@ class SystemAwareRouter(nn.Module):
         query_embedding: torch.Tensor,
         role_embedding: torch.Tensor,
         budget_remaining: float,
-        latency_vector: torch.Tensor,
+        system_state_vector: torch.Tensor,
     ) -> Dict[str, torch.Tensor]:
         budget_tensor = torch.tensor([budget_remaining], device=self.device, dtype=query_embedding.dtype)
-        state_tensor = torch.cat([query_embedding, role_embedding, budget_tensor, latency_vector], dim=0)
+        state_tensor = torch.cat([query_embedding, role_embedding, budget_tensor, system_state_vector], dim=0)
         return {
             "state": state_tensor,
             "budget_remaining": budget_tensor,
@@ -196,25 +238,19 @@ class SystemAwareRouter(nn.Module):
         """
         return self.fixed_budget_sec
 
-    def get_system_latency(self, seed: Optional[str] = None) -> Dict[str, Dict[str, float]]:
-        """
-        Proxy per-model latency estimator.
-        """
-        latency: Dict[str, Dict[str, float]] = {}
-        for model in self.models:
-            rnd = random.Random(f"{seed}-{model}" if seed else model)
-            ttft = rnd.uniform(0.4, 2.0)
-            tpot = rnd.uniform(0.8, 4.5)
-            latency[model] = {"ttft": ttft, "tpot": tpot, "total": ttft + tpot}
-        return latency
+    def get_system_metrics(self) -> Dict[str, Dict[str, float]]:
+        return {model: dict(model_metrics.get(model, {})) for model in self.models}
 
-    def flatten_latency(self, latency_dict: Dict[str, Dict[str, float]], dtype: torch.dtype) -> torch.Tensor:
+    def flatten_system_metrics(self, metrics: Dict[str, Dict[str, float]], dtype: torch.dtype) -> torch.Tensor:
         values: List[float] = []
         for model in self.models:
-            lat = latency_dict.get(model, {})
-            values.append(lat.get("ttft", 0.0))
-            values.append(lat.get("tpot", 0.0))
+            snap = metrics.get(model, {})
+            for key in self.system_metric_keys:
+                values.append(float(snap.get(key, 0.0)))
         return torch.tensor(values, device=self.device, dtype=dtype)
+
+    def get_system_state_vector(self, dtype: torch.dtype) -> torch.Tensor:
+        return self.flatten_system_metrics(self.get_system_metrics(), dtype=dtype)
 
     def compute_executor_reward(
         self,

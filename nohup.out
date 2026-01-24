@@ -1,0 +1,1177 @@
+/home/ahasan/projects/system-aware-mas/.venv/lib/python3.11/site-packages/class_registry/entry_points.py:7: UserWarning: pkg_resources is deprecated as an API. See https://setuptools.pypa.io/en/latest/pkg_resources.html. The pkg_resources package is slated for removal as early as 2025-11-30. Refrain from using this package or pin to Setuptools<81.
+  from pkg_resources import iter_entry_points
+usage: train_system_router_mbpp.py [-h] [--limit LIMIT] [--epochs EPOCHS]
+                                   [--max-tokens MAX_TOKENS]
+                                   [--request-timeout REQUEST_TIMEOUT]
+                                   [--deterministic] [--seed SEED]
+                                   [--log-episodes LOG_EPISODES]
+                                   [--arrival-rate ARRIVAL_RATE]
+                                   [--arrival-rates ARRIVAL_RATES]
+                                   [--arrival-pattern ARRIVAL_PATTERN]
+                                   [--arrival-patterns ARRIVAL_PATTERNS]
+                                   [--concurrency CONCURRENCY]
+                                   [--burst-duration BURST_DURATION]
+                                   [--spike-intensity SPIKE_INTENSITY]
+                                   [--spike-period SPIKE_PERIOD]
+                                   [--checkpoint-dir CHECKPOINT_DIR]
+                                   [--checkpoint-path CHECKPOINT_PATH]
+                                   [--resume-checkpoint]
+                                   [--checkpoint-every CHECKPOINT_EVERY]
+                                   [--telemetry-csv TELEMETRY_CSV]
+                                   [--run-id RUN_ID]
+train_system_router_mbpp.py: error: unrecognized arguments:  
+/home/ahasan/projects/system-aware-mas/.venv/lib/python3.11/site-packages/class_registry/entry_points.py:7: UserWarning: pkg_resources is deprecated as an API. See https://setuptools.pypa.io/en/latest/pkg_resources.html. The pkg_resources package is slated for removal as early as 2025-11-30. Refrain from using this package or pin to Setuptools<81.
+  from pkg_resources import iter_entry_points
+usage: train_system_router_mbpp.py [-h] [--limit LIMIT] [--epochs EPOCHS]
+                                   [--max-tokens MAX_TOKENS]
+                                   [--request-timeout REQUEST_TIMEOUT]
+                                   [--deterministic] [--seed SEED]
+                                   [--log-episodes LOG_EPISODES]
+                                   [--arrival-rate ARRIVAL_RATE]
+                                   [--arrival-rates ARRIVAL_RATES]
+                                   [--arrival-pattern ARRIVAL_PATTERN]
+                                   [--arrival-patterns ARRIVAL_PATTERNS]
+                                   [--concurrency CONCURRENCY]
+                                   [--burst-duration BURST_DURATION]
+                                   [--spike-intensity SPIKE_INTENSITY]
+                                   [--spike-period SPIKE_PERIOD]
+                                   [--checkpoint-dir CHECKPOINT_DIR]
+                                   [--checkpoint-path CHECKPOINT_PATH]
+                                   [--resume-checkpoint]
+                                   [--checkpoint-every CHECKPOINT_EVERY]
+                                   [--telemetry-csv TELEMETRY_CSV]
+                                   [--run-id RUN_ID]
+train_system_router_mbpp.py: error: unrecognized arguments:  
+/home/ahasan/projects/system-aware-mas/.venv/lib/python3.11/site-packages/class_registry/entry_points.py:7: UserWarning: pkg_resources is deprecated as an API. See https://setuptools.pypa.io/en/latest/pkg_resources.html. The pkg_resources package is slated for removal as early as 2025-11-30. Refrain from using this package or pin to Setuptools<81.
+  from pkg_resources import iter_entry_points
+2026-01-24 00:14:17.475 | INFO     | __main__:<module>:147 - Train telemetry CSV: logs/mbpp_2026-01-24-00-14-17_train.csv
+2026-01-24 00:14:18.554 | INFO     | __main__:<module>:157 - Start training...
+2026-01-24 00:14:18.554 | INFO     | __main__:<module>:163 - Epoch 0
+2026-01-24 00:14:18.555 | INFO     | __main__:<module>:170 - Batch 0
+2026-01-24 00:14:18.555 | INFO     | MAR.MasRouter.mas_router:encoder_roles:412 - Loading role embeddings...
+2026-01-24 00:14:18.813 | INFO     | MAR.MasRouter.mas_router:encoder_roles:429 - Role embeddings loaded.
+2026-01-24 00:14:18.964 | INFO     | MAR.MasRouter.mas_router:run_entry:241 - Query: 
+**Task**:
+```python
+Write a python function to find the first repeated character in a given string.
+```
+Your code should pass these tests:
+```python
+
+assert first_repeated_char("abcabc") == "a"
+assert first_repeated_char("abc") == "None"
+assert first_repeated_char("123123") == "1"
+```
+
+2026-01-24 00:14:18.964 | INFO     | MAR.MasRouter.mas_router:run_entry:242 - Task: Code
+2026-01-24 00:14:18.964 | INFO     | MAR.MasRouter.mas_router:run_entry:241 - Query: 
+**Task**:
+```python
+Write a function to get a lucid number smaller than or equal to n.
+```
+Your code should pass these tests:
+```python
+
+assert get_ludic(10) == [1, 2, 3, 5, 7]
+assert get_ludic(25) == [1, 2, 3, 5, 7, 11, 13, 17, 23, 25]
+assert get_ludic(45) == [1, 2, 3, 5, 7, 11, 13, 17, 23, 25, 29, 37, 41, 43]
+```
+
+2026-01-24 00:14:18.965 | INFO     | MAR.MasRouter.mas_router:run_entry:243 - LLMs: ['meta-llama/Llama-3.2-3B-Instruct', 'Qwen/Qwen2.5-3B-Instruct', 'Qwen/Qwen2.5-3B-Instruct']
+2026-01-24 00:14:18.965 | INFO     | MAR.MasRouter.mas_router:run_entry:242 - Task: Code
+2026-01-24 00:14:18.965 | INFO     | MAR.MasRouter.mas_router:run_entry:244 - Reasoning: CoT
+2026-01-24 00:14:18.965 | INFO     | MAR.MasRouter.mas_router:run_entry:241 - Query: 
+**Task**:
+```python
+Write a function to convert degrees to radians.
+```
+Your code should pass these tests:
+```python
+
+assert radian_degree(90)==1.5707963267948966
+assert radian_degree(60)==1.0471975511965976
+assert radian_degree(120)==2.0943951023931953
+```
+
+2026-01-24 00:14:18.966 | INFO     | MAR.MasRouter.mas_router:run_entry:241 - Query: 
+**Task**:
+```python
+Write a function to check if the given integer is a prime number.
+```
+Your code should pass these tests:
+```python
+
+assert prime_num(13)==True
+assert prime_num(7)==True
+assert prime_num(-1010)==False
+```
+
+2026-01-24 00:14:18.966 | INFO     | MAR.MasRouter.mas_router:run_entry:243 - LLMs: ['Qwen/Qwen2.5-3B-Instruct', 'Qwen/Qwen2.5-3B-Instruct', 'Qwen/Qwen2.5-3B-Instruct']
+2026-01-24 00:14:18.966 | INFO     | MAR.MasRouter.mas_router:run_entry:245 - Roles: ['ProjectManager', 'ProgrammingExpert', 'ReflectProgrammer']
+2026-01-24 00:14:18.966 | INFO     | MAR.MasRouter.mas_router:run_entry:242 - Task: Code
+2026-01-24 00:14:18.966 | INFO     | MAR.MasRouter.mas_router:run_entry:242 - Task: Code
+2026-01-24 00:14:18.966 | INFO     | MAR.MasRouter.mas_router:run_entry:241 - Query: 
+**Task**:
+```python
+Write a function to find the longest chain which can be formed from the given set of pairs.
+```
+Your code should pass these tests:
+```python
+
+assert max_chain_length([Pair(5, 24), Pair(15, 25),Pair(27, 40), Pair(50, 60)], 4) == 3
+assert max_chain_length([Pair(1, 2), Pair(3, 4),Pair(5, 6), Pair(7, 8)], 4) == 4
+assert max_chain_length([Pair(19, 10), Pair(11, 12),Pair(13, 14), Pair(15, 16), Pair(31, 54)], 5) == 5
+```
+
+2026-01-24 00:14:18.967 | INFO     | MAR.MasRouter.mas_router:run_entry:241 - Query: 
+**Task**:
+```python
+Write a function to reverse words in a given string.
+```
+Your code should pass these tests:
+```python
+
+assert reverse_words("python program")==("program python")
+assert reverse_words("java language")==("language java")
+assert reverse_words("indian man")==("man indian")
+```
+
+2026-01-24 00:14:18.967 | INFO     | MAR.MasRouter.mas_router:run_entry:244 - Reasoning: CoT
+2026-01-24 00:14:18.967 | INFO     | MAR.MasRouter.mas_router:run_entry:246 - -----------------------------------
+2026-01-24 00:14:18.967 | INFO     | MAR.MasRouter.mas_router:run_entry:243 - LLMs: ['mistralai/Mistral-7B-Instruct-v0.3', 'meta-llama/Llama-3.2-3B-Instruct', 'Qwen/Qwen2.5-3B-Instruct']
+2026-01-24 00:14:18.967 | INFO     | MAR.MasRouter.mas_router:run_entry:243 - LLMs: ['Qwen/Qwen2.5-3B-Instruct', 'mistralai/Mistral-7B-Instruct-v0.3', 'mistralai/Mistral-7B-Instruct-v0.3']
+2026-01-24 00:14:18.967 | INFO     | MAR.MasRouter.mas_router:run_entry:242 - Task: Code
+2026-01-24 00:14:18.967 | INFO     | MAR.MasRouter.mas_router:run_entry:242 - Task: Code
+2026-01-24 00:14:18.967 | INFO     | MAR.MasRouter.mas_router:run_entry:245 - Roles: ['AlgorithmDesigner', 'AlgorithmDesigner', 'BugFixer']
+2026-01-24 00:14:18.967 | INFO     | MAR.MasRouter.mas_router:run_entry:244 - Reasoning: Chain
+2026-01-24 00:14:18.968 | INFO     | MAR.MasRouter.mas_router:run_entry:244 - Reasoning: Chain
+2026-01-24 00:14:18.968 | INFO     | MAR.MasRouter.mas_router:run_entry:243 - LLMs: ['Qwen/Qwen2.5-3B-Instruct', 'meta-llama/Llama-3.2-3B-Instruct', 'Qwen/Qwen2.5-3B-Instruct']
+2026-01-24 00:14:18.968 | INFO     | MAR.MasRouter.mas_router:run_entry:243 - LLMs: ['meta-llama/Llama-3.2-3B-Instruct', 'mistralai/Mistral-7B-Instruct-v0.3', 'Qwen/Qwen2.5-3B-Instruct']
+2026-01-24 00:14:18.968 | INFO     | MAR.MasRouter.mas_router:run_entry:246 - -----------------------------------
+2026-01-24 00:14:18.968 | INFO     | MAR.MasRouter.mas_router:run_entry:245 - Roles: ['PlanSolver', 'BugFixer', 'ProgrammingExpert']
+2026-01-24 00:14:18.968 | INFO     | MAR.MasRouter.mas_router:run_entry:245 - Roles: ['TestAnalyst', 'BugFixer', 'ReflectProgrammer']
+2026-01-24 00:14:18.969 | INFO     | MAR.MasRouter.mas_router:run_entry:244 - Reasoning: FullConnected
+2026-01-24 00:14:18.969 | INFO     | MAR.MasRouter.mas_router:run_entry:244 - Reasoning: CoT
+2026-01-24 00:14:18.969 | INFO     | MAR.MasRouter.mas_router:run_entry:246 - -----------------------------------
+2026-01-24 00:14:18.969 | INFO     | MAR.MasRouter.mas_router:run_entry:246 - -----------------------------------
+2026-01-24 00:14:18.969 | INFO     | MAR.MasRouter.mas_router:run_entry:245 - Roles: ['ProgrammingExpert', 'ReflectProgrammer', 'TestAnalyst']
+2026-01-24 00:14:18.970 | INFO     | MAR.MasRouter.mas_router:run_entry:245 - Roles: ['PlanSolver', 'PlanSolver', 'PlanSolver']
+2026-01-24 00:14:18.971 | INFO     | MAR.MasRouter.mas_router:run_entry:246 - -----------------------------------
+2026-01-24 00:14:18.971 | INFO     | MAR.MasRouter.mas_router:run_entry:246 - -----------------------------------
+2026-01-24 00:15:01.501 | INFO     | __main__:<module>:287 - Batch time 42.946
+2026-01-24 00:15:01.501 | INFO     | __main__:<module>:288 - Accuracy: 0.6666666666666666
+2026-01-24 00:15:01.501 | INFO     | __main__:<module>:289 - utilities:[0.960492, -0.048232, 0.88696, 0.931692, -0.085952, 0.8803960000000001]
+2026-01-24 00:15:01.734 | INFO     | __main__:<module>:163 - Epoch 1
+2026-01-24 00:15:01.734 | INFO     | __main__:<module>:170 - Batch 0
+2026-01-24 00:15:01.750 | INFO     | MAR.MasRouter.mas_router:run_entry:241 - Query: 
+**Task**:
+```python
+Write a function to get a lucid number smaller than or equal to n.
+```
+Your code should pass these tests:
+```python
+
+assert get_ludic(10) == [1, 2, 3, 5, 7]
+assert get_ludic(25) == [1, 2, 3, 5, 7, 11, 13, 17, 23, 25]
+assert get_ludic(45) == [1, 2, 3, 5, 7, 11, 13, 17, 23, 25, 29, 37, 41, 43]
+```
+
+2026-01-24 00:15:01.750 | INFO     | MAR.MasRouter.mas_router:run_entry:241 - Query: 
+**Task**:
+```python
+Write a function to reverse words in a given string.
+```
+Your code should pass these tests:
+```python
+
+assert reverse_words("python program")==("program python")
+assert reverse_words("java language")==("language java")
+assert reverse_words("indian man")==("man indian")
+```
+
+2026-01-24 00:15:01.750 | INFO     | MAR.MasRouter.mas_router:run_entry:242 - Task: Code
+2026-01-24 00:15:01.750 | INFO     | MAR.MasRouter.mas_router:run_entry:241 - Query: 
+**Task**:
+```python
+Write a python function to find the first repeated character in a given string.
+```
+Your code should pass these tests:
+```python
+
+assert first_repeated_char("abcabc") == "a"
+assert first_repeated_char("abc") == "None"
+assert first_repeated_char("123123") == "1"
+```
+
+2026-01-24 00:15:01.751 | INFO     | MAR.MasRouter.mas_router:run_entry:242 - Task: Code
+2026-01-24 00:15:01.751 | INFO     | MAR.MasRouter.mas_router:run_entry:241 - Query: 
+**Task**:
+```python
+Write a function to check if the given integer is a prime number.
+```
+Your code should pass these tests:
+```python
+
+assert prime_num(13)==True
+assert prime_num(7)==True
+assert prime_num(-1010)==False
+```
+
+2026-01-24 00:15:01.751 | INFO     | MAR.MasRouter.mas_router:run_entry:243 - LLMs: ['mistralai/Mistral-7B-Instruct-v0.3', 'meta-llama/Llama-3.2-3B-Instruct', 'mistralai/Mistral-7B-Instruct-v0.3']
+2026-01-24 00:15:01.751 | INFO     | MAR.MasRouter.mas_router:run_entry:241 - Query: 
+**Task**:
+```python
+Write a function to find the longest chain which can be formed from the given set of pairs.
+```
+Your code should pass these tests:
+```python
+
+assert max_chain_length([Pair(5, 24), Pair(15, 25),Pair(27, 40), Pair(50, 60)], 4) == 3
+assert max_chain_length([Pair(1, 2), Pair(3, 4),Pair(5, 6), Pair(7, 8)], 4) == 4
+assert max_chain_length([Pair(19, 10), Pair(11, 12),Pair(13, 14), Pair(15, 16), Pair(31, 54)], 5) == 5
+```
+
+2026-01-24 00:15:01.751 | INFO     | MAR.MasRouter.mas_router:run_entry:242 - Task: Code
+2026-01-24 00:15:01.751 | INFO     | MAR.MasRouter.mas_router:run_entry:241 - Query: 
+**Task**:
+```python
+Write a function to convert degrees to radians.
+```
+Your code should pass these tests:
+```python
+
+assert radian_degree(90)==1.5707963267948966
+assert radian_degree(60)==1.0471975511965976
+assert radian_degree(120)==2.0943951023931953
+```
+
+2026-01-24 00:15:01.752 | INFO     | MAR.MasRouter.mas_router:run_entry:243 - LLMs: ['mistralai/Mistral-7B-Instruct-v0.3', 'meta-llama/Llama-3.2-3B-Instruct', 'Qwen/Qwen2.5-3B-Instruct']
+2026-01-24 00:15:01.752 | INFO     | MAR.MasRouter.mas_router:run_entry:242 - Task: Code
+2026-01-24 00:15:01.752 | INFO     | MAR.MasRouter.mas_router:run_entry:244 - Reasoning: Chain
+2026-01-24 00:15:01.752 | INFO     | MAR.MasRouter.mas_router:run_entry:242 - Task: Code
+2026-01-24 00:15:01.752 | INFO     | MAR.MasRouter.mas_router:run_entry:243 - LLMs: ['Qwen/Qwen2.5-3B-Instruct', 'Qwen/Qwen2.5-3B-Instruct', 'meta-llama/Llama-3.2-3B-Instruct']
+2026-01-24 00:15:01.752 | INFO     | MAR.MasRouter.mas_router:run_entry:242 - Task: Code
+2026-01-24 00:15:01.752 | INFO     | MAR.MasRouter.mas_router:run_entry:244 - Reasoning: FullConnected
+2026-01-24 00:15:01.752 | INFO     | MAR.MasRouter.mas_router:run_entry:243 - LLMs: ['Qwen/Qwen2.5-3B-Instruct', 'Qwen/Qwen2.5-3B-Instruct', 'meta-llama/Llama-3.2-3B-Instruct']
+2026-01-24 00:15:01.753 | INFO     | MAR.MasRouter.mas_router:run_entry:245 - Roles: ['BugFixer', 'AlgorithmDesigner', 'BugFixer']
+2026-01-24 00:15:01.753 | INFO     | MAR.MasRouter.mas_router:run_entry:243 - LLMs: ['meta-llama/Llama-3.2-3B-Instruct', 'meta-llama/Llama-3.2-3B-Instruct', 'meta-llama/Llama-3.2-3B-Instruct']
+2026-01-24 00:15:01.753 | INFO     | MAR.MasRouter.mas_router:run_entry:244 - Reasoning: Chain
+2026-01-24 00:15:01.753 | INFO     | MAR.MasRouter.mas_router:run_entry:243 - LLMs: ['mistralai/Mistral-7B-Instruct-v0.3', 'meta-llama/Llama-3.2-3B-Instruct', 'Qwen/Qwen2.5-3B-Instruct']
+2026-01-24 00:15:01.753 | INFO     | MAR.MasRouter.mas_router:run_entry:245 - Roles: ['BugFixer', 'ProgrammingExpert', 'ReflectProgrammer']
+2026-01-24 00:15:01.753 | INFO     | MAR.MasRouter.mas_router:run_entry:244 - Reasoning: FullConnected
+2026-01-24 00:15:01.753 | INFO     | MAR.MasRouter.mas_router:run_entry:246 - -----------------------------------
+2026-01-24 00:15:01.753 | INFO     | MAR.MasRouter.mas_router:run_entry:244 - Reasoning: Reflection
+2026-01-24 00:15:01.753 | INFO     | MAR.MasRouter.mas_router:run_entry:245 - Roles: ['ReflectProgrammer', 'ProjectManager', 'ProgrammingExpert']
+2026-01-24 00:15:01.753 | INFO     | MAR.MasRouter.mas_router:run_entry:244 - Reasoning: IO
+2026-01-24 00:15:01.753 | INFO     | MAR.MasRouter.mas_router:run_entry:246 - -----------------------------------
+2026-01-24 00:15:01.753 | INFO     | MAR.MasRouter.mas_router:run_entry:245 - Roles: ['TestAnalyst', 'BugFixer', 'ProgrammingExpert']
+2026-01-24 00:15:01.754 | INFO     | MAR.MasRouter.mas_router:run_entry:245 - Roles: ['ReflectProgrammer', 'TestAnalyst', 'ProjectManager']
+2026-01-24 00:15:01.754 | INFO     | MAR.MasRouter.mas_router:run_entry:246 - -----------------------------------
+2026-01-24 00:15:01.754 | INFO     | MAR.MasRouter.mas_router:run_entry:245 - Roles: ['ProjectManager', 'PlanSolver', 'PlanSolver']
+2026-01-24 00:15:01.755 | INFO     | MAR.MasRouter.mas_router:run_entry:246 - -----------------------------------
+2026-01-24 00:15:01.755 | INFO     | MAR.MasRouter.mas_router:run_entry:246 - -----------------------------------
+2026-01-24 00:15:01.756 | INFO     | MAR.MasRouter.mas_router:run_entry:246 - -----------------------------------
+2026-01-24 00:15:51.218 | INFO     | __main__:<module>:287 - Batch time 49.483
+2026-01-24 00:15:51.218 | INFO     | __main__:<module>:288 - Accuracy: 0.5
+2026-01-24 00:15:51.218 | INFO     | __main__:<module>:289 - utilities:[-0.43128000000000005, -0.1903, 0.98282, 0.989044, -0.07649600000000001, 0.907304]
+2026-01-24 00:15:51.384 | INFO     | __main__:<module>:163 - Epoch 2
+2026-01-24 00:15:51.385 | INFO     | __main__:<module>:170 - Batch 0
+2026-01-24 00:15:51.403 | INFO     | MAR.MasRouter.mas_router:run_entry:241 - Query: 
+**Task**:
+```python
+Write a function to reverse words in a given string.
+```
+Your code should pass these tests:
+```python
+
+assert reverse_words("python program")==("program python")
+assert reverse_words("java language")==("language java")
+assert reverse_words("indian man")==("man indian")
+```
+
+2026-01-24 00:15:51.404 | INFO     | MAR.MasRouter.mas_router:run_entry:241 - Query: 
+**Task**:
+```python
+Write a function to get a lucid number smaller than or equal to n.
+```
+Your code should pass these tests:
+```python
+
+assert get_ludic(10) == [1, 2, 3, 5, 7]
+assert get_ludic(25) == [1, 2, 3, 5, 7, 11, 13, 17, 23, 25]
+assert get_ludic(45) == [1, 2, 3, 5, 7, 11, 13, 17, 23, 25, 29, 37, 41, 43]
+```
+
+2026-01-24 00:15:51.404 | INFO     | MAR.MasRouter.mas_router:run_entry:242 - Task: Code
+2026-01-24 00:15:51.404 | INFO     | MAR.MasRouter.mas_router:run_entry:241 - Query: 
+**Task**:
+```python
+Write a python function to find the first repeated character in a given string.
+```
+Your code should pass these tests:
+```python
+
+assert first_repeated_char("abcabc") == "a"
+assert first_repeated_char("abc") == "None"
+assert first_repeated_char("123123") == "1"
+```
+
+2026-01-24 00:15:51.404 | INFO     | MAR.MasRouter.mas_router:run_entry:242 - Task: Code
+2026-01-24 00:15:51.404 | INFO     | MAR.MasRouter.mas_router:run_entry:241 - Query: 
+**Task**:
+```python
+Write a function to check if the given integer is a prime number.
+```
+Your code should pass these tests:
+```python
+
+assert prime_num(13)==True
+assert prime_num(7)==True
+assert prime_num(-1010)==False
+```
+
+2026-01-24 00:15:51.405 | INFO     | MAR.MasRouter.mas_router:run_entry:243 - LLMs: ['mistralai/Mistral-7B-Instruct-v0.3', 'Qwen/Qwen2.5-3B-Instruct', 'meta-llama/Llama-3.2-3B-Instruct', 'Qwen/Qwen2.5-3B-Instruct']
+2026-01-24 00:15:51.405 | INFO     | MAR.MasRouter.mas_router:run_entry:241 - Query: 
+**Task**:
+```python
+Write a function to convert degrees to radians.
+```
+Your code should pass these tests:
+```python
+
+assert radian_degree(90)==1.5707963267948966
+assert radian_degree(60)==1.0471975511965976
+assert radian_degree(120)==2.0943951023931953
+```
+
+2026-01-24 00:15:51.405 | INFO     | MAR.MasRouter.mas_router:run_entry:242 - Task: Code
+2026-01-24 00:15:51.405 | INFO     | MAR.MasRouter.mas_router:run_entry:241 - Query: 
+**Task**:
+```python
+Write a function to find the longest chain which can be formed from the given set of pairs.
+```
+Your code should pass these tests:
+```python
+
+assert max_chain_length([Pair(5, 24), Pair(15, 25),Pair(27, 40), Pair(50, 60)], 4) == 3
+assert max_chain_length([Pair(1, 2), Pair(3, 4),Pair(5, 6), Pair(7, 8)], 4) == 4
+assert max_chain_length([Pair(19, 10), Pair(11, 12),Pair(13, 14), Pair(15, 16), Pair(31, 54)], 5) == 5
+```
+
+2026-01-24 00:15:51.405 | INFO     | MAR.MasRouter.mas_router:run_entry:243 - LLMs: ['mistralai/Mistral-7B-Instruct-v0.3', 'meta-llama/Llama-3.2-3B-Instruct', 'meta-llama/Llama-3.2-3B-Instruct', 'meta-llama/Llama-3.2-3B-Instruct']
+2026-01-24 00:15:51.405 | INFO     | MAR.MasRouter.mas_router:run_entry:242 - Task: Code
+2026-01-24 00:15:51.406 | INFO     | MAR.MasRouter.mas_router:run_entry:244 - Reasoning: IO
+2026-01-24 00:15:51.406 | INFO     | MAR.MasRouter.mas_router:run_entry:242 - Task: Code
+2026-01-24 00:15:51.406 | INFO     | MAR.MasRouter.mas_router:run_entry:243 - LLMs: ['mistralai/Mistral-7B-Instruct-v0.3', 'Qwen/Qwen2.5-3B-Instruct', 'mistralai/Mistral-7B-Instruct-v0.3', 'Qwen/Qwen2.5-3B-Instruct']
+2026-01-24 00:15:51.406 | INFO     | MAR.MasRouter.mas_router:run_entry:242 - Task: Code
+2026-01-24 00:15:51.406 | INFO     | MAR.MasRouter.mas_router:run_entry:244 - Reasoning: Reflection
+2026-01-24 00:15:51.406 | INFO     | MAR.MasRouter.mas_router:run_entry:243 - LLMs: ['mistralai/Mistral-7B-Instruct-v0.3', 'mistralai/Mistral-7B-Instruct-v0.3', 'meta-llama/Llama-3.2-3B-Instruct', 'mistralai/Mistral-7B-Instruct-v0.3']
+2026-01-24 00:15:51.406 | INFO     | MAR.MasRouter.mas_router:run_entry:245 - Roles: ['ProgrammingExpert', 'BugFixer', 'BugFixer', 'ProgrammingExpert']
+2026-01-24 00:15:51.406 | INFO     | MAR.MasRouter.mas_router:run_entry:243 - LLMs: ['meta-llama/Llama-3.2-3B-Instruct', 'mistralai/Mistral-7B-Instruct-v0.3', 'meta-llama/Llama-3.2-3B-Instruct', 'Qwen/Qwen2.5-3B-Instruct']
+2026-01-24 00:15:51.406 | INFO     | MAR.MasRouter.mas_router:run_entry:244 - Reasoning: IO
+2026-01-24 00:15:51.406 | INFO     | MAR.MasRouter.mas_router:run_entry:243 - LLMs: ['Qwen/Qwen2.5-3B-Instruct', 'meta-llama/Llama-3.2-3B-Instruct', 'meta-llama/Llama-3.2-3B-Instruct', 'Qwen/Qwen2.5-3B-Instruct']
+2026-01-24 00:15:51.407 | INFO     | MAR.MasRouter.mas_router:run_entry:245 - Roles: ['TestAnalyst', 'AlgorithmDesigner', 'TestAnalyst', 'ReflectProgrammer']
+2026-01-24 00:15:51.407 | INFO     | MAR.MasRouter.mas_router:run_entry:244 - Reasoning: Chain
+2026-01-24 00:15:51.407 | INFO     | MAR.MasRouter.mas_router:run_entry:246 - -----------------------------------
+2026-01-24 00:15:51.407 | INFO     | MAR.MasRouter.mas_router:run_entry:244 - Reasoning: CoT
+2026-01-24 00:15:51.407 | INFO     | MAR.MasRouter.mas_router:run_entry:245 - Roles: ['AlgorithmDesigner', 'ReflectProgrammer', 'TestAnalyst', 'AlgorithmDesigner']
+2026-01-24 00:15:51.407 | INFO     | MAR.MasRouter.mas_router:run_entry:244 - Reasoning: Reflection
+2026-01-24 00:15:51.407 | INFO     | MAR.MasRouter.mas_router:run_entry:246 - -----------------------------------
+2026-01-24 00:15:51.407 | INFO     | MAR.MasRouter.mas_router:run_entry:245 - Roles: ['ProgrammingExpert', 'ReflectProgrammer', 'ProgrammingExpert', 'ReflectProgrammer']
+2026-01-24 00:15:51.407 | INFO     | MAR.MasRouter.mas_router:run_entry:245 - Roles: ['ReflectProgrammer', 'ReflectProgrammer', 'AlgorithmDesigner', 'PlanSolver']
+2026-01-24 00:15:51.408 | INFO     | MAR.MasRouter.mas_router:run_entry:246 - -----------------------------------
+2026-01-24 00:15:51.408 | INFO     | MAR.MasRouter.mas_router:run_entry:245 - Roles: ['PlanSolver', 'ProgrammingExpert', 'PlanSolver', 'ProgrammingExpert']
+2026-01-24 00:15:51.409 | INFO     | MAR.MasRouter.mas_router:run_entry:246 - -----------------------------------
+2026-01-24 00:15:51.409 | INFO     | MAR.MasRouter.mas_router:run_entry:246 - -----------------------------------
+2026-01-24 00:15:51.409 | INFO     | MAR.MasRouter.mas_router:run_entry:246 - -----------------------------------
+2026-01-24 00:16:25.117 | INFO     | __main__:<module>:287 - Batch time 33.732
+2026-01-24 00:16:25.117 | INFO     | __main__:<module>:288 - Accuracy: 0.6666666666666666
+2026-01-24 00:16:25.117 | INFO     | __main__:<module>:289 - utilities:[0.950228, -0.156616, -0.17490400000000003, 0.85392, 0.90328, 0.88918]
+2026-01-24 00:16:25.265 | INFO     | __main__:<module>:163 - Epoch 3
+2026-01-24 00:16:25.266 | INFO     | __main__:<module>:170 - Batch 0
+2026-01-24 00:16:25.284 | INFO     | MAR.MasRouter.mas_router:run_entry:241 - Query: 
+**Task**:
+```python
+Write a function to convert degrees to radians.
+```
+Your code should pass these tests:
+```python
+
+assert radian_degree(90)==1.5707963267948966
+assert radian_degree(60)==1.0471975511965976
+assert radian_degree(120)==2.0943951023931953
+```
+
+2026-01-24 00:16:25.285 | INFO     | MAR.MasRouter.mas_router:run_entry:241 - Query: 
+**Task**:
+```python
+Write a function to get a lucid number smaller than or equal to n.
+```
+Your code should pass these tests:
+```python
+
+assert get_ludic(10) == [1, 2, 3, 5, 7]
+assert get_ludic(25) == [1, 2, 3, 5, 7, 11, 13, 17, 23, 25]
+assert get_ludic(45) == [1, 2, 3, 5, 7, 11, 13, 17, 23, 25, 29, 37, 41, 43]
+```
+
+2026-01-24 00:16:25.285 | INFO     | MAR.MasRouter.mas_router:run_entry:242 - Task: Code
+2026-01-24 00:16:25.285 | INFO     | MAR.MasRouter.mas_router:run_entry:241 - Query: 
+**Task**:
+```python
+Write a function to find the longest chain which can be formed from the given set of pairs.
+```
+Your code should pass these tests:
+```python
+
+assert max_chain_length([Pair(5, 24), Pair(15, 25),Pair(27, 40), Pair(50, 60)], 4) == 3
+assert max_chain_length([Pair(1, 2), Pair(3, 4),Pair(5, 6), Pair(7, 8)], 4) == 4
+assert max_chain_length([Pair(19, 10), Pair(11, 12),Pair(13, 14), Pair(15, 16), Pair(31, 54)], 5) == 5
+```
+
+2026-01-24 00:16:25.285 | INFO     | MAR.MasRouter.mas_router:run_entry:242 - Task: Code
+2026-01-24 00:16:25.285 | INFO     | MAR.MasRouter.mas_router:run_entry:243 - LLMs: ['meta-llama/Llama-3.2-3B-Instruct', 'meta-llama/Llama-3.2-3B-Instruct', 'Qwen/Qwen2.5-3B-Instruct', 'Qwen/Qwen2.5-3B-Instruct']
+2026-01-24 00:16:25.285 | INFO     | MAR.MasRouter.mas_router:run_entry:241 - Query: 
+**Task**:
+```python
+Write a python function to find the first repeated character in a given string.
+```
+Your code should pass these tests:
+```python
+
+assert first_repeated_char("abcabc") == "a"
+assert first_repeated_char("abc") == "None"
+assert first_repeated_char("123123") == "1"
+```
+
+2026-01-24 00:16:25.286 | INFO     | MAR.MasRouter.mas_router:run_entry:241 - Query: 
+**Task**:
+```python
+Write a function to reverse words in a given string.
+```
+Your code should pass these tests:
+```python
+
+assert reverse_words("python program")==("program python")
+assert reverse_words("java language")==("language java")
+assert reverse_words("indian man")==("man indian")
+```
+
+2026-01-24 00:16:25.286 | INFO     | MAR.MasRouter.mas_router:run_entry:242 - Task: Code
+2026-01-24 00:16:25.286 | INFO     | MAR.MasRouter.mas_router:run_entry:241 - Query: 
+**Task**:
+```python
+Write a function to check if the given integer is a prime number.
+```
+Your code should pass these tests:
+```python
+
+assert prime_num(13)==True
+assert prime_num(7)==True
+assert prime_num(-1010)==False
+```
+
+2026-01-24 00:16:25.287 | INFO     | MAR.MasRouter.mas_router:run_entry:243 - LLMs: ['meta-llama/Llama-3.2-3B-Instruct', 'mistralai/Mistral-7B-Instruct-v0.3', 'mistralai/Mistral-7B-Instruct-v0.3', 'mistralai/Mistral-7B-Instruct-v0.3']
+2026-01-24 00:16:25.287 | INFO     | MAR.MasRouter.mas_router:run_entry:244 - Reasoning: Reflection
+2026-01-24 00:16:25.287 | INFO     | MAR.MasRouter.mas_router:run_entry:242 - Task: Code
+2026-01-24 00:16:25.287 | INFO     | MAR.MasRouter.mas_router:run_entry:242 - Task: Code
+2026-01-24 00:16:25.287 | INFO     | MAR.MasRouter.mas_router:run_entry:243 - LLMs: ['Qwen/Qwen2.5-3B-Instruct', 'Qwen/Qwen2.5-3B-Instruct', 'meta-llama/Llama-3.2-3B-Instruct', 'meta-llama/Llama-3.2-3B-Instruct']
+2026-01-24 00:16:25.287 | INFO     | MAR.MasRouter.mas_router:run_entry:242 - Task: Code
+2026-01-24 00:16:25.287 | INFO     | MAR.MasRouter.mas_router:run_entry:244 - Reasoning: Reflection
+2026-01-24 00:16:25.287 | INFO     | MAR.MasRouter.mas_router:run_entry:245 - Roles: ['AlgorithmDesigner', 'ProgrammingExpert', 'ReflectProgrammer', 'ProjectManager']
+2026-01-24 00:16:25.287 | INFO     | MAR.MasRouter.mas_router:run_entry:243 - LLMs: ['Qwen/Qwen2.5-3B-Instruct', 'Qwen/Qwen2.5-3B-Instruct', 'Qwen/Qwen2.5-3B-Instruct', 'mistralai/Mistral-7B-Instruct-v0.3']
+2026-01-24 00:16:25.287 | INFO     | MAR.MasRouter.mas_router:run_entry:243 - LLMs: ['Qwen/Qwen2.5-3B-Instruct', 'meta-llama/Llama-3.2-3B-Instruct', 'meta-llama/Llama-3.2-3B-Instruct', 'mistralai/Mistral-7B-Instruct-v0.3']
+2026-01-24 00:16:25.287 | INFO     | MAR.MasRouter.mas_router:run_entry:244 - Reasoning: Debate
+2026-01-24 00:16:25.287 | INFO     | MAR.MasRouter.mas_router:run_entry:243 - LLMs: ['Qwen/Qwen2.5-3B-Instruct', 'mistralai/Mistral-7B-Instruct-v0.3', 'mistralai/Mistral-7B-Instruct-v0.3', 'mistralai/Mistral-7B-Instruct-v0.3']
+2026-01-24 00:16:25.288 | INFO     | MAR.MasRouter.mas_router:run_entry:245 - Roles: ['ReflectProgrammer', 'ProjectManager', 'TestAnalyst', 'PlanSolver']
+2026-01-24 00:16:25.288 | INFO     | MAR.MasRouter.mas_router:run_entry:246 - -----------------------------------
+2026-01-24 00:16:25.288 | INFO     | MAR.MasRouter.mas_router:run_entry:244 - Reasoning: Debate
+2026-01-24 00:16:25.288 | INFO     | MAR.MasRouter.mas_router:run_entry:244 - Reasoning: Debate
+2026-01-24 00:16:25.288 | INFO     | MAR.MasRouter.mas_router:run_entry:245 - Roles: ['ProjectManager', 'PlanSolver', 'AlgorithmDesigner', 'PlanSolver']
+2026-01-24 00:16:25.288 | INFO     | MAR.MasRouter.mas_router:run_entry:244 - Reasoning: FullConnected
+2026-01-24 00:16:25.288 | INFO     | MAR.MasRouter.mas_router:run_entry:246 - -----------------------------------
+2026-01-24 00:16:25.288 | INFO     | MAR.MasRouter.mas_router:run_entry:245 - Roles: ['AlgorithmDesigner', 'ProgrammingExpert', 'PlanSolver', 'ProjectManager']
+2026-01-24 00:16:25.289 | INFO     | MAR.MasRouter.mas_router:run_entry:245 - Roles: ['TestAnalyst', 'ProjectManager', 'PlanSolver', 'TestAnalyst']
+2026-01-24 00:16:25.289 | INFO     | MAR.MasRouter.mas_router:run_entry:246 - -----------------------------------
+2026-01-24 00:16:25.289 | INFO     | MAR.MasRouter.mas_router:run_entry:245 - Roles: ['ProjectManager', 'AlgorithmDesigner', 'AlgorithmDesigner', 'TestAnalyst']
+2026-01-24 00:16:25.290 | INFO     | MAR.MasRouter.mas_router:run_entry:246 - -----------------------------------
+2026-01-24 00:16:25.290 | INFO     | MAR.MasRouter.mas_router:run_entry:246 - -----------------------------------
+2026-01-24 00:16:25.290 | INFO     | MAR.MasRouter.mas_router:run_entry:246 - -----------------------------------
+2026-01-24 00:16:53.861 | INFO     | __main__:<module>:287 - Batch time 28.595
+2026-01-24 00:16:53.862 | INFO     | __main__:<module>:288 - Accuracy: 0.6666666666666666
+2026-01-24 00:16:53.862 | INFO     | __main__:<module>:289 - utilities:[-0.034628000000000006, -0.4704, 0.913412, 0.932352, 0.911088, 0.950792]
+2026-01-24 00:16:54.009 | INFO     | __main__:<module>:163 - Epoch 4
+2026-01-24 00:16:54.009 | INFO     | __main__:<module>:170 - Batch 0
+2026-01-24 00:16:54.028 | INFO     | MAR.MasRouter.mas_router:run_entry:241 - Query: 
+**Task**:
+```python
+Write a function to reverse words in a given string.
+```
+Your code should pass these tests:
+```python
+
+assert reverse_words("python program")==("program python")
+assert reverse_words("java language")==("language java")
+assert reverse_words("indian man")==("man indian")
+```
+
+2026-01-24 00:16:54.028 | INFO     | MAR.MasRouter.mas_router:run_entry:241 - Query: 
+**Task**:
+```python
+Write a python function to find the first repeated character in a given string.
+```
+Your code should pass these tests:
+```python
+
+assert first_repeated_char("abcabc") == "a"
+assert first_repeated_char("abc") == "None"
+assert first_repeated_char("123123") == "1"
+```
+
+2026-01-24 00:16:54.028 | INFO     | MAR.MasRouter.mas_router:run_entry:242 - Task: Code
+2026-01-24 00:16:54.029 | INFO     | MAR.MasRouter.mas_router:run_entry:241 - Query: 
+**Task**:
+```python
+Write a function to get a lucid number smaller than or equal to n.
+```
+Your code should pass these tests:
+```python
+
+assert get_ludic(10) == [1, 2, 3, 5, 7]
+assert get_ludic(25) == [1, 2, 3, 5, 7, 11, 13, 17, 23, 25]
+assert get_ludic(45) == [1, 2, 3, 5, 7, 11, 13, 17, 23, 25, 29, 37, 41, 43]
+```
+
+2026-01-24 00:16:54.029 | INFO     | MAR.MasRouter.mas_router:run_entry:242 - Task: Code
+2026-01-24 00:16:54.029 | INFO     | MAR.MasRouter.mas_router:run_entry:241 - Query: 
+**Task**:
+```python
+Write a function to check if the given integer is a prime number.
+```
+Your code should pass these tests:
+```python
+
+assert prime_num(13)==True
+assert prime_num(7)==True
+assert prime_num(-1010)==False
+```
+
+2026-01-24 00:16:54.029 | INFO     | MAR.MasRouter.mas_router:run_entry:243 - LLMs: ['Qwen/Qwen2.5-3B-Instruct', 'meta-llama/Llama-3.2-3B-Instruct', 'Qwen/Qwen2.5-3B-Instruct', 'Qwen/Qwen2.5-3B-Instruct']
+2026-01-24 00:16:54.030 | INFO     | MAR.MasRouter.mas_router:run_entry:241 - Query: 
+**Task**:
+```python
+Write a function to find the longest chain which can be formed from the given set of pairs.
+```
+Your code should pass these tests:
+```python
+
+assert max_chain_length([Pair(5, 24), Pair(15, 25),Pair(27, 40), Pair(50, 60)], 4) == 3
+assert max_chain_length([Pair(1, 2), Pair(3, 4),Pair(5, 6), Pair(7, 8)], 4) == 4
+assert max_chain_length([Pair(19, 10), Pair(11, 12),Pair(13, 14), Pair(15, 16), Pair(31, 54)], 5) == 5
+```
+
+2026-01-24 00:16:54.030 | INFO     | MAR.MasRouter.mas_router:run_entry:241 - Query: 
+**Task**:
+```python
+Write a function to convert degrees to radians.
+```
+Your code should pass these tests:
+```python
+
+assert radian_degree(90)==1.5707963267948966
+assert radian_degree(60)==1.0471975511965976
+assert radian_degree(120)==2.0943951023931953
+```
+
+2026-01-24 00:16:54.030 | INFO     | MAR.MasRouter.mas_router:run_entry:242 - Task: Code
+2026-01-24 00:16:54.030 | INFO     | MAR.MasRouter.mas_router:run_entry:243 - LLMs: ['mistralai/Mistral-7B-Instruct-v0.3', 'meta-llama/Llama-3.2-3B-Instruct', 'Qwen/Qwen2.5-3B-Instruct', 'mistralai/Mistral-7B-Instruct-v0.3']
+2026-01-24 00:16:54.030 | INFO     | MAR.MasRouter.mas_router:run_entry:242 - Task: Code
+2026-01-24 00:16:54.030 | INFO     | MAR.MasRouter.mas_router:run_entry:244 - Reasoning: FullConnected
+2026-01-24 00:16:54.030 | INFO     | MAR.MasRouter.mas_router:run_entry:242 - Task: Code
+2026-01-24 00:16:54.030 | INFO     | MAR.MasRouter.mas_router:run_entry:242 - Task: Code
+2026-01-24 00:16:54.031 | INFO     | MAR.MasRouter.mas_router:run_entry:243 - LLMs: ['mistralai/Mistral-7B-Instruct-v0.3', 'Qwen/Qwen2.5-3B-Instruct', 'meta-llama/Llama-3.2-3B-Instruct', 'Qwen/Qwen2.5-3B-Instruct']
+2026-01-24 00:16:54.031 | INFO     | MAR.MasRouter.mas_router:run_entry:244 - Reasoning: CoT
+2026-01-24 00:16:54.031 | INFO     | MAR.MasRouter.mas_router:run_entry:243 - LLMs: ['Qwen/Qwen2.5-3B-Instruct', 'Qwen/Qwen2.5-3B-Instruct', 'Qwen/Qwen2.5-3B-Instruct', 'Qwen/Qwen2.5-3B-Instruct']
+2026-01-24 00:16:54.031 | INFO     | MAR.MasRouter.mas_router:run_entry:245 - Roles: ['ReflectProgrammer', 'TestAnalyst', 'ProjectManager', 'TestAnalyst']
+2026-01-24 00:16:54.031 | INFO     | MAR.MasRouter.mas_router:run_entry:243 - LLMs: ['mistralai/Mistral-7B-Instruct-v0.3', 'mistralai/Mistral-7B-Instruct-v0.3', 'mistralai/Mistral-7B-Instruct-v0.3', 'Qwen/Qwen2.5-3B-Instruct']
+2026-01-24 00:16:54.031 | INFO     | MAR.MasRouter.mas_router:run_entry:243 - LLMs: ['mistralai/Mistral-7B-Instruct-v0.3', 'meta-llama/Llama-3.2-3B-Instruct', 'mistralai/Mistral-7B-Instruct-v0.3', 'Qwen/Qwen2.5-3B-Instruct']
+2026-01-24 00:16:54.031 | INFO     | MAR.MasRouter.mas_router:run_entry:244 - Reasoning: Reflection
+2026-01-24 00:16:54.031 | INFO     | MAR.MasRouter.mas_router:run_entry:245 - Roles: ['ReflectProgrammer', 'ProjectManager', 'ProgrammingExpert', 'PlanSolver']
+2026-01-24 00:16:54.031 | INFO     | MAR.MasRouter.mas_router:run_entry:244 - Reasoning: FullConnected
+2026-01-24 00:16:54.031 | INFO     | MAR.MasRouter.mas_router:run_entry:246 - -----------------------------------
+2026-01-24 00:16:54.031 | INFO     | MAR.MasRouter.mas_router:run_entry:244 - Reasoning: IO
+2026-01-24 00:16:54.031 | INFO     | MAR.MasRouter.mas_router:run_entry:244 - Reasoning: Debate
+2026-01-24 00:16:54.031 | INFO     | MAR.MasRouter.mas_router:run_entry:245 - Roles: ['BugFixer', 'PlanSolver', 'TestAnalyst', 'TestAnalyst']
+2026-01-24 00:16:54.032 | INFO     | MAR.MasRouter.mas_router:run_entry:246 - -----------------------------------
+2026-01-24 00:16:54.032 | INFO     | MAR.MasRouter.mas_router:run_entry:245 - Roles: ['ProgrammingExpert', 'ProgrammingExpert', 'ReflectProgrammer', 'AlgorithmDesigner']
+2026-01-24 00:16:54.032 | INFO     | MAR.MasRouter.mas_router:run_entry:245 - Roles: ['ProjectManager', 'PlanSolver', 'ProjectManager', 'AlgorithmDesigner']
+2026-01-24 00:16:54.032 | INFO     | MAR.MasRouter.mas_router:run_entry:245 - Roles: ['ProgrammingExpert', 'ProgrammingExpert', 'AlgorithmDesigner', 'TestAnalyst']
+2026-01-24 00:16:54.032 | INFO     | MAR.MasRouter.mas_router:run_entry:246 - -----------------------------------
+2026-01-24 00:16:54.033 | INFO     | MAR.MasRouter.mas_router:run_entry:246 - -----------------------------------
+2026-01-24 00:16:54.033 | INFO     | MAR.MasRouter.mas_router:run_entry:246 - -----------------------------------
+2026-01-24 00:16:54.033 | INFO     | MAR.MasRouter.mas_router:run_entry:246 - -----------------------------------
+2026-01-24 00:17:23.380 | INFO     | __main__:<module>:287 - Batch time 29.371
+2026-01-24 00:17:23.380 | INFO     | __main__:<module>:288 - Accuracy: 0.6666666666666666
+2026-01-24 00:17:23.380 | INFO     | __main__:<module>:289 - utilities:[0.973164, 0.672148, -0.18956800000000001, 0.990264, -0.295736, 0.862584]
+2026-01-24 00:17:23.541 | INFO     | __main__:<module>:163 - Epoch 5
+2026-01-24 00:17:23.542 | INFO     | __main__:<module>:170 - Batch 0
+2026-01-24 00:17:23.560 | INFO     | MAR.MasRouter.mas_router:run_entry:241 - Query: 
+**Task**:
+```python
+Write a function to convert degrees to radians.
+```
+Your code should pass these tests:
+```python
+
+assert radian_degree(90)==1.5707963267948966
+assert radian_degree(60)==1.0471975511965976
+assert radian_degree(120)==2.0943951023931953
+```
+
+2026-01-24 00:17:23.560 | INFO     | MAR.MasRouter.mas_router:run_entry:241 - Query: 
+**Task**:
+```python
+Write a function to get a lucid number smaller than or equal to n.
+```
+Your code should pass these tests:
+```python
+
+assert get_ludic(10) == [1, 2, 3, 5, 7]
+assert get_ludic(25) == [1, 2, 3, 5, 7, 11, 13, 17, 23, 25]
+assert get_ludic(45) == [1, 2, 3, 5, 7, 11, 13, 17, 23, 25, 29, 37, 41, 43]
+```
+
+2026-01-24 00:17:23.561 | INFO     | MAR.MasRouter.mas_router:run_entry:242 - Task: Code
+2026-01-24 00:17:23.561 | INFO     | MAR.MasRouter.mas_router:run_entry:241 - Query: 
+**Task**:
+```python
+Write a function to check if the given integer is a prime number.
+```
+Your code should pass these tests:
+```python
+
+assert prime_num(13)==True
+assert prime_num(7)==True
+assert prime_num(-1010)==False
+```
+
+2026-01-24 00:17:23.561 | INFO     | MAR.MasRouter.mas_router:run_entry:242 - Task: Code
+2026-01-24 00:17:23.561 | INFO     | MAR.MasRouter.mas_router:run_entry:243 - LLMs: ['Qwen/Qwen2.5-3B-Instruct', 'Qwen/Qwen2.5-3B-Instruct', 'meta-llama/Llama-3.2-3B-Instruct', 'meta-llama/Llama-3.2-3B-Instruct']
+2026-01-24 00:17:23.561 | INFO     | MAR.MasRouter.mas_router:run_entry:241 - Query: 
+**Task**:
+```python
+Write a function to reverse words in a given string.
+```
+Your code should pass these tests:
+```python
+
+assert reverse_words("python program")==("program python")
+assert reverse_words("java language")==("language java")
+assert reverse_words("indian man")==("man indian")
+```
+
+2026-01-24 00:17:23.562 | INFO     | MAR.MasRouter.mas_router:run_entry:241 - Query: 
+**Task**:
+```python
+Write a function to find the longest chain which can be formed from the given set of pairs.
+```
+Your code should pass these tests:
+```python
+
+assert max_chain_length([Pair(5, 24), Pair(15, 25),Pair(27, 40), Pair(50, 60)], 4) == 3
+assert max_chain_length([Pair(1, 2), Pair(3, 4),Pair(5, 6), Pair(7, 8)], 4) == 4
+assert max_chain_length([Pair(19, 10), Pair(11, 12),Pair(13, 14), Pair(15, 16), Pair(31, 54)], 5) == 5
+```
+
+2026-01-24 00:17:23.562 | INFO     | MAR.MasRouter.mas_router:run_entry:242 - Task: Code
+2026-01-24 00:17:23.562 | INFO     | MAR.MasRouter.mas_router:run_entry:243 - LLMs: ['mistralai/Mistral-7B-Instruct-v0.3', 'Qwen/Qwen2.5-3B-Instruct', 'meta-llama/Llama-3.2-3B-Instruct', 'Qwen/Qwen2.5-3B-Instruct']
+2026-01-24 00:17:23.562 | INFO     | MAR.MasRouter.mas_router:run_entry:241 - Query: 
+**Task**:
+```python
+Write a python function to find the first repeated character in a given string.
+```
+Your code should pass these tests:
+```python
+
+assert first_repeated_char("abcabc") == "a"
+assert first_repeated_char("abc") == "None"
+assert first_repeated_char("123123") == "1"
+```
+
+2026-01-24 00:17:23.562 | INFO     | MAR.MasRouter.mas_router:run_entry:244 - Reasoning: Debate
+2026-01-24 00:17:23.563 | INFO     | MAR.MasRouter.mas_router:run_entry:242 - Task: Code
+2026-01-24 00:17:23.563 | INFO     | MAR.MasRouter.mas_router:run_entry:242 - Task: Code
+2026-01-24 00:17:23.563 | INFO     | MAR.MasRouter.mas_router:run_entry:243 - LLMs: ['Qwen/Qwen2.5-3B-Instruct', 'mistralai/Mistral-7B-Instruct-v0.3', 'Qwen/Qwen2.5-3B-Instruct', 'mistralai/Mistral-7B-Instruct-v0.3']
+2026-01-24 00:17:23.563 | INFO     | MAR.MasRouter.mas_router:run_entry:244 - Reasoning: Reflection
+2026-01-24 00:17:23.563 | INFO     | MAR.MasRouter.mas_router:run_entry:242 - Task: Code
+2026-01-24 00:17:23.563 | INFO     | MAR.MasRouter.mas_router:run_entry:245 - Roles: ['AlgorithmDesigner', 'AlgorithmDesigner', 'BugFixer', 'AlgorithmDesigner']
+2026-01-24 00:17:23.563 | INFO     | MAR.MasRouter.mas_router:run_entry:243 - LLMs: ['meta-llama/Llama-3.2-3B-Instruct', 'Qwen/Qwen2.5-3B-Instruct', 'meta-llama/Llama-3.2-3B-Instruct', 'Qwen/Qwen2.5-3B-Instruct']
+2026-01-24 00:17:23.563 | INFO     | MAR.MasRouter.mas_router:run_entry:243 - LLMs: ['Qwen/Qwen2.5-3B-Instruct', 'meta-llama/Llama-3.2-3B-Instruct', 'mistralai/Mistral-7B-Instruct-v0.3', 'Qwen/Qwen2.5-3B-Instruct']
+2026-01-24 00:17:23.563 | INFO     | MAR.MasRouter.mas_router:run_entry:244 - Reasoning: CoT
+2026-01-24 00:17:23.563 | INFO     | MAR.MasRouter.mas_router:run_entry:245 - Roles: ['ReflectProgrammer', 'TestAnalyst', 'PlanSolver', 'ReflectProgrammer']
+2026-01-24 00:17:23.564 | INFO     | MAR.MasRouter.mas_router:run_entry:243 - LLMs: ['Qwen/Qwen2.5-3B-Instruct', 'Qwen/Qwen2.5-3B-Instruct', 'Qwen/Qwen2.5-3B-Instruct', 'meta-llama/Llama-3.2-3B-Instruct']
+2026-01-24 00:17:23.564 | INFO     | MAR.MasRouter.mas_router:run_entry:246 - -----------------------------------
+2026-01-24 00:17:23.564 | INFO     | MAR.MasRouter.mas_router:run_entry:244 - Reasoning: FullConnected
+2026-01-24 00:17:23.564 | INFO     | MAR.MasRouter.mas_router:run_entry:244 - Reasoning: IO
+2026-01-24 00:17:23.564 | INFO     | MAR.MasRouter.mas_router:run_entry:245 - Roles: ['TestAnalyst', 'BugFixer', 'ProjectManager', 'BugFixer']
+2026-01-24 00:17:23.564 | INFO     | MAR.MasRouter.mas_router:run_entry:246 - -----------------------------------
+2026-01-24 00:17:23.564 | INFO     | MAR.MasRouter.mas_router:run_entry:244 - Reasoning: Reflection
+2026-01-24 00:17:23.565 | INFO     | MAR.MasRouter.mas_router:run_entry:245 - Roles: ['AlgorithmDesigner', 'ReflectProgrammer', 'ProgrammingExpert', 'AlgorithmDesigner']
+2026-01-24 00:17:23.565 | INFO     | MAR.MasRouter.mas_router:run_entry:245 - Roles: ['PlanSolver', 'ReflectProgrammer', 'AlgorithmDesigner', 'PlanSolver']
+2026-01-24 00:17:23.565 | INFO     | MAR.MasRouter.mas_router:run_entry:246 - -----------------------------------
+2026-01-24 00:17:23.566 | INFO     | MAR.MasRouter.mas_router:run_entry:245 - Roles: ['ProjectManager', 'PlanSolver', 'ProjectManager', 'BugFixer']
+2026-01-24 00:17:23.566 | INFO     | MAR.MasRouter.mas_router:run_entry:246 - -----------------------------------
+2026-01-24 00:17:23.567 | INFO     | MAR.MasRouter.mas_router:run_entry:246 - -----------------------------------
+2026-01-24 00:17:23.567 | INFO     | MAR.MasRouter.mas_router:run_entry:246 - -----------------------------------
+2026-01-24 00:17:55.143 | INFO     | __main__:<module>:287 - Batch time 31.601
+2026-01-24 00:17:55.143 | INFO     | __main__:<module>:288 - Accuracy: 0.6666666666666666
+2026-01-24 00:17:55.143 | INFO     | __main__:<module>:289 - utilities:[0.979972, -0.160524, 0.7698119999999999, 0.961132, -0.11646000000000001, 0.951856]
+2026-01-24 00:17:55.305 | INFO     | __main__:<module>:163 - Epoch 6
+2026-01-24 00:17:55.306 | INFO     | __main__:<module>:170 - Batch 0
+2026-01-24 00:17:55.324 | INFO     | MAR.MasRouter.mas_router:run_entry:241 - Query: 
+**Task**:
+```python
+Write a function to get a lucid number smaller than or equal to n.
+```
+Your code should pass these tests:
+```python
+
+assert get_ludic(10) == [1, 2, 3, 5, 7]
+assert get_ludic(25) == [1, 2, 3, 5, 7, 11, 13, 17, 23, 25]
+assert get_ludic(45) == [1, 2, 3, 5, 7, 11, 13, 17, 23, 25, 29, 37, 41, 43]
+```
+
+2026-01-24 00:17:55.324 | INFO     | MAR.MasRouter.mas_router:run_entry:241 - Query: 
+**Task**:
+```python
+Write a function to reverse words in a given string.
+```
+Your code should pass these tests:
+```python
+
+assert reverse_words("python program")==("program python")
+assert reverse_words("java language")==("language java")
+assert reverse_words("indian man")==("man indian")
+```
+
+2026-01-24 00:17:55.324 | INFO     | MAR.MasRouter.mas_router:run_entry:242 - Task: Code
+2026-01-24 00:17:55.325 | INFO     | MAR.MasRouter.mas_router:run_entry:242 - Task: Code
+2026-01-24 00:17:55.325 | INFO     | MAR.MasRouter.mas_router:run_entry:241 - Query: 
+**Task**:
+```python
+Write a python function to find the first repeated character in a given string.
+```
+Your code should pass these tests:
+```python
+
+assert first_repeated_char("abcabc") == "a"
+assert first_repeated_char("abc") == "None"
+assert first_repeated_char("123123") == "1"
+```
+
+2026-01-24 00:17:55.325 | INFO     | MAR.MasRouter.mas_router:run_entry:243 - LLMs: ['meta-llama/Llama-3.2-3B-Instruct', 'meta-llama/Llama-3.2-3B-Instruct', 'meta-llama/Llama-3.2-3B-Instruct', 'mistralai/Mistral-7B-Instruct-v0.3']
+2026-01-24 00:17:55.325 | INFO     | MAR.MasRouter.mas_router:run_entry:241 - Query: 
+**Task**:
+```python
+Write a function to find the longest chain which can be formed from the given set of pairs.
+```
+Your code should pass these tests:
+```python
+
+assert max_chain_length([Pair(5, 24), Pair(15, 25),Pair(27, 40), Pair(50, 60)], 4) == 3
+assert max_chain_length([Pair(1, 2), Pair(3, 4),Pair(5, 6), Pair(7, 8)], 4) == 4
+assert max_chain_length([Pair(19, 10), Pair(11, 12),Pair(13, 14), Pair(15, 16), Pair(31, 54)], 5) == 5
+```
+
+2026-01-24 00:17:55.325 | INFO     | MAR.MasRouter.mas_router:run_entry:243 - LLMs: ['mistralai/Mistral-7B-Instruct-v0.3', 'Qwen/Qwen2.5-3B-Instruct', 'mistralai/Mistral-7B-Instruct-v0.3', 'Qwen/Qwen2.5-3B-Instruct']
+2026-01-24 00:17:55.326 | INFO     | MAR.MasRouter.mas_router:run_entry:241 - Query: 
+**Task**:
+```python
+Write a function to convert degrees to radians.
+```
+Your code should pass these tests:
+```python
+
+assert radian_degree(90)==1.5707963267948966
+assert radian_degree(60)==1.0471975511965976
+assert radian_degree(120)==2.0943951023931953
+```
+
+2026-01-24 00:17:55.326 | INFO     | MAR.MasRouter.mas_router:run_entry:242 - Task: Code
+2026-01-24 00:17:55.326 | INFO     | MAR.MasRouter.mas_router:run_entry:244 - Reasoning: FullConnected
+2026-01-24 00:17:55.326 | INFO     | MAR.MasRouter.mas_router:run_entry:241 - Query: 
+**Task**:
+```python
+Write a function to check if the given integer is a prime number.
+```
+Your code should pass these tests:
+```python
+
+assert prime_num(13)==True
+assert prime_num(7)==True
+assert prime_num(-1010)==False
+```
+
+2026-01-24 00:17:55.326 | INFO     | MAR.MasRouter.mas_router:run_entry:242 - Task: Code
+2026-01-24 00:17:55.326 | INFO     | MAR.MasRouter.mas_router:run_entry:244 - Reasoning: Reflection
+2026-01-24 00:17:55.326 | INFO     | MAR.MasRouter.mas_router:run_entry:242 - Task: Code
+2026-01-24 00:17:55.326 | INFO     | MAR.MasRouter.mas_router:run_entry:243 - LLMs: ['Qwen/Qwen2.5-3B-Instruct', 'mistralai/Mistral-7B-Instruct-v0.3', 'Qwen/Qwen2.5-3B-Instruct', 'Qwen/Qwen2.5-3B-Instruct']
+2026-01-24 00:17:55.326 | INFO     | MAR.MasRouter.mas_router:run_entry:245 - Roles: ['PlanSolver', 'ProgrammingExpert', 'BugFixer', 'AlgorithmDesigner']
+2026-01-24 00:17:55.327 | INFO     | MAR.MasRouter.mas_router:run_entry:242 - Task: Code
+2026-01-24 00:17:55.327 | INFO     | MAR.MasRouter.mas_router:run_entry:243 - LLMs: ['Qwen/Qwen2.5-3B-Instruct', 'Qwen/Qwen2.5-3B-Instruct', 'Qwen/Qwen2.5-3B-Instruct', 'meta-llama/Llama-3.2-3B-Instruct']
+2026-01-24 00:17:55.327 | INFO     | MAR.MasRouter.mas_router:run_entry:245 - Roles: ['TestAnalyst', 'BugFixer', 'ReflectProgrammer', 'ReflectProgrammer']
+2026-01-24 00:17:55.327 | INFO     | MAR.MasRouter.mas_router:run_entry:243 - LLMs: ['meta-llama/Llama-3.2-3B-Instruct', 'Qwen/Qwen2.5-3B-Instruct', 'Qwen/Qwen2.5-3B-Instruct', 'mistralai/Mistral-7B-Instruct-v0.3']
+2026-01-24 00:17:55.327 | INFO     | MAR.MasRouter.mas_router:run_entry:244 - Reasoning: CoT
+2026-01-24 00:17:55.327 | INFO     | MAR.MasRouter.mas_router:run_entry:246 - -----------------------------------
+2026-01-24 00:17:55.327 | INFO     | MAR.MasRouter.mas_router:run_entry:243 - LLMs: ['mistralai/Mistral-7B-Instruct-v0.3', 'Qwen/Qwen2.5-3B-Instruct', 'mistralai/Mistral-7B-Instruct-v0.3', 'meta-llama/Llama-3.2-3B-Instruct']
+2026-01-24 00:17:55.327 | INFO     | MAR.MasRouter.mas_router:run_entry:244 - Reasoning: Debate
+2026-01-24 00:17:55.327 | INFO     | MAR.MasRouter.mas_router:run_entry:246 - -----------------------------------
+2026-01-24 00:17:55.328 | INFO     | MAR.MasRouter.mas_router:run_entry:244 - Reasoning: IO
+2026-01-24 00:17:55.328 | INFO     | MAR.MasRouter.mas_router:run_entry:245 - Roles: ['TestAnalyst', 'AlgorithmDesigner', 'TestAnalyst', 'ProjectManager']
+2026-01-24 00:17:55.328 | INFO     | MAR.MasRouter.mas_router:run_entry:244 - Reasoning: CoT
+2026-01-24 00:17:55.328 | INFO     | MAR.MasRouter.mas_router:run_entry:245 - Roles: ['ProgrammingExpert', 'PlanSolver', 'BugFixer', 'AlgorithmDesigner']
+2026-01-24 00:17:55.329 | INFO     | MAR.MasRouter.mas_router:run_entry:245 - Roles: ['ReflectProgrammer', 'ProjectManager', 'ProjectManager', 'TestAnalyst']
+2026-01-24 00:17:55.329 | INFO     | MAR.MasRouter.mas_router:run_entry:246 - -----------------------------------
+2026-01-24 00:17:55.329 | INFO     | MAR.MasRouter.mas_router:run_entry:245 - Roles: ['TestAnalyst', 'ProgrammingExpert', 'ProgrammingExpert', 'AlgorithmDesigner']
+2026-01-24 00:17:55.330 | INFO     | MAR.MasRouter.mas_router:run_entry:246 - -----------------------------------
+2026-01-24 00:17:55.330 | INFO     | MAR.MasRouter.mas_router:run_entry:246 - -----------------------------------
+2026-01-24 00:17:55.330 | INFO     | MAR.MasRouter.mas_router:run_entry:246 - -----------------------------------
+2026-01-24 00:18:55.990 | INFO     | __main__:<module>:287 - Batch time 60.684
+2026-01-24 00:18:55.990 | INFO     | __main__:<module>:288 - Accuracy: 0.8333333333333334
+2026-01-24 00:18:55.990 | INFO     | __main__:<module>:289 - utilities:[-0.30824, 0.782944, 0.939188, 0.899592, 0.93418, 0.780988]
+2026-01-24 00:18:56.152 | INFO     | __main__:<module>:163 - Epoch 7
+2026-01-24 00:18:56.153 | INFO     | __main__:<module>:170 - Batch 0
+2026-01-24 00:18:56.171 | INFO     | MAR.MasRouter.mas_router:run_entry:241 - Query: 
+**Task**:
+```python
+Write a function to find the longest chain which can be formed from the given set of pairs.
+```
+Your code should pass these tests:
+```python
+
+assert max_chain_length([Pair(5, 24), Pair(15, 25),Pair(27, 40), Pair(50, 60)], 4) == 3
+assert max_chain_length([Pair(1, 2), Pair(3, 4),Pair(5, 6), Pair(7, 8)], 4) == 4
+assert max_chain_length([Pair(19, 10), Pair(11, 12),Pair(13, 14), Pair(15, 16), Pair(31, 54)], 5) == 5
+```
+
+2026-01-24 00:18:56.172 | INFO     | MAR.MasRouter.mas_router:run_entry:241 - Query: 
+**Task**:
+```python
+Write a function to check if the given integer is a prime number.
+```
+Your code should pass these tests:
+```python
+
+assert prime_num(13)==True
+assert prime_num(7)==True
+assert prime_num(-1010)==False
+```
+
+2026-01-24 00:18:56.172 | INFO     | MAR.MasRouter.mas_router:run_entry:242 - Task: Code
+2026-01-24 00:18:56.172 | INFO     | MAR.MasRouter.mas_router:run_entry:241 - Query: 
+**Task**:
+```python
+Write a python function to find the first repeated character in a given string.
+```
+Your code should pass these tests:
+```python
+
+assert first_repeated_char("abcabc") == "a"
+assert first_repeated_char("abc") == "None"
+assert first_repeated_char("123123") == "1"
+```
+
+2026-01-24 00:18:56.172 | INFO     | MAR.MasRouter.mas_router:run_entry:242 - Task: Code
+2026-01-24 00:18:56.172 | INFO     | MAR.MasRouter.mas_router:run_entry:243 - LLMs: ['Qwen/Qwen2.5-3B-Instruct', 'Qwen/Qwen2.5-3B-Instruct', 'Qwen/Qwen2.5-3B-Instruct', 'mistralai/Mistral-7B-Instruct-v0.3']
+2026-01-24 00:18:56.172 | INFO     | MAR.MasRouter.mas_router:run_entry:241 - Query: 
+**Task**:
+```python
+Write a function to reverse words in a given string.
+```
+Your code should pass these tests:
+```python
+
+assert reverse_words("python program")==("program python")
+assert reverse_words("java language")==("language java")
+assert reverse_words("indian man")==("man indian")
+```
+
+2026-01-24 00:18:56.173 | INFO     | MAR.MasRouter.mas_router:run_entry:242 - Task: Code
+2026-01-24 00:18:56.173 | INFO     | MAR.MasRouter.mas_router:run_entry:241 - Query: 
+**Task**:
+```python
+Write a function to get a lucid number smaller than or equal to n.
+```
+Your code should pass these tests:
+```python
+
+assert get_ludic(10) == [1, 2, 3, 5, 7]
+assert get_ludic(25) == [1, 2, 3, 5, 7, 11, 13, 17, 23, 25]
+assert get_ludic(45) == [1, 2, 3, 5, 7, 11, 13, 17, 23, 25, 29, 37, 41, 43]
+```
+
+2026-01-24 00:18:56.173 | INFO     | MAR.MasRouter.mas_router:run_entry:243 - LLMs: ['Qwen/Qwen2.5-3B-Instruct', 'Qwen/Qwen2.5-3B-Instruct', 'Qwen/Qwen2.5-3B-Instruct', 'meta-llama/Llama-3.2-3B-Instruct']
+2026-01-24 00:18:56.173 | INFO     | MAR.MasRouter.mas_router:run_entry:244 - Reasoning: Reflection
+2026-01-24 00:18:56.173 | INFO     | MAR.MasRouter.mas_router:run_entry:241 - Query: 
+**Task**:
+```python
+Write a function to convert degrees to radians.
+```
+Your code should pass these tests:
+```python
+
+assert radian_degree(90)==1.5707963267948966
+assert radian_degree(60)==1.0471975511965976
+assert radian_degree(120)==2.0943951023931953
+```
+
+2026-01-24 00:18:56.173 | INFO     | MAR.MasRouter.mas_router:run_entry:242 - Task: Code
+2026-01-24 00:18:56.173 | INFO     | MAR.MasRouter.mas_router:run_entry:243 - LLMs: ['mistralai/Mistral-7B-Instruct-v0.3', 'Qwen/Qwen2.5-3B-Instruct', 'Qwen/Qwen2.5-3B-Instruct', 'mistralai/Mistral-7B-Instruct-v0.3']
+2026-01-24 00:18:56.173 | INFO     | MAR.MasRouter.mas_router:run_entry:242 - Task: Code
+2026-01-24 00:18:56.173 | INFO     | MAR.MasRouter.mas_router:run_entry:244 - Reasoning: IO
+2026-01-24 00:18:56.174 | INFO     | MAR.MasRouter.mas_router:run_entry:245 - Roles: ['AlgorithmDesigner', 'AlgorithmDesigner', 'TestAnalyst', 'ProjectManager']
+2026-01-24 00:18:56.174 | INFO     | MAR.MasRouter.mas_router:run_entry:242 - Task: Code
+2026-01-24 00:18:56.174 | INFO     | MAR.MasRouter.mas_router:run_entry:243 - LLMs: ['Qwen/Qwen2.5-3B-Instruct', 'Qwen/Qwen2.5-3B-Instruct', 'mistralai/Mistral-7B-Instruct-v0.3', 'Qwen/Qwen2.5-3B-Instruct']
+2026-01-24 00:18:56.174 | INFO     | MAR.MasRouter.mas_router:run_entry:244 - Reasoning: FullConnected
+2026-01-24 00:18:56.174 | INFO     | MAR.MasRouter.mas_router:run_entry:243 - LLMs: ['mistralai/Mistral-7B-Instruct-v0.3', 'mistralai/Mistral-7B-Instruct-v0.3', 'meta-llama/Llama-3.2-3B-Instruct', 'meta-llama/Llama-3.2-3B-Instruct']
+2026-01-24 00:18:56.174 | INFO     | MAR.MasRouter.mas_router:run_entry:245 - Roles: ['AlgorithmDesigner', 'AlgorithmDesigner', 'AlgorithmDesigner', 'ReflectProgrammer']
+2026-01-24 00:18:56.174 | INFO     | MAR.MasRouter.mas_router:run_entry:246 - -----------------------------------
+2026-01-24 00:18:56.174 | INFO     | MAR.MasRouter.mas_router:run_entry:243 - LLMs: ['Qwen/Qwen2.5-3B-Instruct', 'Qwen/Qwen2.5-3B-Instruct', 'Qwen/Qwen2.5-3B-Instruct', 'mistralai/Mistral-7B-Instruct-v0.3']
+2026-01-24 00:18:56.174 | INFO     | MAR.MasRouter.mas_router:run_entry:244 - Reasoning: Chain
+2026-01-24 00:18:56.174 | INFO     | MAR.MasRouter.mas_router:run_entry:245 - Roles: ['PlanSolver', 'AlgorithmDesigner', 'ProgrammingExpert', 'PlanSolver']
+2026-01-24 00:18:56.174 | INFO     | MAR.MasRouter.mas_router:run_entry:244 - Reasoning: FullConnected
+2026-01-24 00:18:56.174 | INFO     | MAR.MasRouter.mas_router:run_entry:246 - -----------------------------------
+2026-01-24 00:18:56.174 | INFO     | MAR.MasRouter.mas_router:run_entry:244 - Reasoning: IO
+2026-01-24 00:18:56.175 | INFO     | MAR.MasRouter.mas_router:run_entry:245 - Roles: ['ProjectManager', 'ProgrammingExpert', 'BugFixer', 'TestAnalyst']
+2026-01-24 00:18:56.175 | INFO     | MAR.MasRouter.mas_router:run_entry:246 - -----------------------------------
+2026-01-24 00:18:56.175 | INFO     | MAR.MasRouter.mas_router:run_entry:245 - Roles: ['ProgrammingExpert', 'ReflectProgrammer', 'ProjectManager', 'TestAnalyst']
+2026-01-24 00:18:56.175 | INFO     | MAR.MasRouter.mas_router:run_entry:245 - Roles: ['AlgorithmDesigner', 'ProgrammingExpert', 'BugFixer', 'ProgrammingExpert']
+2026-01-24 00:18:56.175 | INFO     | MAR.MasRouter.mas_router:run_entry:246 - -----------------------------------
+2026-01-24 00:18:56.176 | INFO     | MAR.MasRouter.mas_router:run_entry:246 - -----------------------------------
+2026-01-24 00:18:56.176 | INFO     | MAR.MasRouter.mas_router:run_entry:246 - -----------------------------------
+2026-01-24 00:19:37.728 | INFO     | __main__:<module>:287 - Batch time 41.575
+2026-01-24 00:19:37.728 | INFO     | __main__:<module>:288 - Accuracy: 0.5
+2026-01-24 00:19:37.728 | INFO     | __main__:<module>:289 - utilities:[-0.174196, 0.964364, -0.376732, 0.869324, -0.35564, 0.951996]
+2026-01-24 00:19:37.897 | INFO     | __main__:<module>:163 - Epoch 8
+2026-01-24 00:19:37.897 | INFO     | __main__:<module>:170 - Batch 0
+2026-01-24 00:19:37.916 | INFO     | MAR.MasRouter.mas_router:run_entry:241 - Query: 
+**Task**:
+```python
+Write a function to check if the given integer is a prime number.
+```
+Your code should pass these tests:
+```python
+
+assert prime_num(13)==True
+assert prime_num(7)==True
+assert prime_num(-1010)==False
+```
+
+2026-01-24 00:19:37.916 | INFO     | MAR.MasRouter.mas_router:run_entry:241 - Query: 
+**Task**:
+```python
+Write a function to find the longest chain which can be formed from the given set of pairs.
+```
+Your code should pass these tests:
+```python
+
+assert max_chain_length([Pair(5, 24), Pair(15, 25),Pair(27, 40), Pair(50, 60)], 4) == 3
+assert max_chain_length([Pair(1, 2), Pair(3, 4),Pair(5, 6), Pair(7, 8)], 4) == 4
+assert max_chain_length([Pair(19, 10), Pair(11, 12),Pair(13, 14), Pair(15, 16), Pair(31, 54)], 5) == 5
+```
+
+2026-01-24 00:19:37.916 | INFO     | MAR.MasRouter.mas_router:run_entry:242 - Task: Code
+2026-01-24 00:19:37.917 | INFO     | MAR.MasRouter.mas_router:run_entry:241 - Query: 
+**Task**:
+```python
+Write a function to get a lucid number smaller than or equal to n.
+```
+Your code should pass these tests:
+```python
+
+assert get_ludic(10) == [1, 2, 3, 5, 7]
+assert get_ludic(25) == [1, 2, 3, 5, 7, 11, 13, 17, 23, 25]
+assert get_ludic(45) == [1, 2, 3, 5, 7, 11, 13, 17, 23, 25, 29, 37, 41, 43]
+```
+
+2026-01-24 00:19:37.917 | INFO     | MAR.MasRouter.mas_router:run_entry:242 - Task: Code
+2026-01-24 00:19:37.917 | INFO     | MAR.MasRouter.mas_router:run_entry:243 - LLMs: ['mistralai/Mistral-7B-Instruct-v0.3', 'Qwen/Qwen2.5-3B-Instruct', 'Qwen/Qwen2.5-3B-Instruct', 'Qwen/Qwen2.5-3B-Instruct']
+2026-01-24 00:19:37.917 | INFO     | MAR.MasRouter.mas_router:run_entry:241 - Query: 
+**Task**:
+```python
+Write a function to reverse words in a given string.
+```
+Your code should pass these tests:
+```python
+
+assert reverse_words("python program")==("program python")
+assert reverse_words("java language")==("language java")
+assert reverse_words("indian man")==("man indian")
+```
+
+2026-01-24 00:19:37.917 | INFO     | MAR.MasRouter.mas_router:run_entry:242 - Task: Code
+2026-01-24 00:19:37.918 | INFO     | MAR.MasRouter.mas_router:run_entry:241 - Query: 
+**Task**:
+```python
+Write a function to convert degrees to radians.
+```
+Your code should pass these tests:
+```python
+
+assert radian_degree(90)==1.5707963267948966
+assert radian_degree(60)==1.0471975511965976
+assert radian_degree(120)==2.0943951023931953
+```
+
+2026-01-24 00:19:37.918 | INFO     | MAR.MasRouter.mas_router:run_entry:243 - LLMs: ['mistralai/Mistral-7B-Instruct-v0.3', 'mistralai/Mistral-7B-Instruct-v0.3', 'mistralai/Mistral-7B-Instruct-v0.3', 'Qwen/Qwen2.5-3B-Instruct']
+2026-01-24 00:19:37.918 | INFO     | MAR.MasRouter.mas_router:run_entry:244 - Reasoning: Debate
+2026-01-24 00:19:37.918 | INFO     | MAR.MasRouter.mas_router:run_entry:241 - Query: 
+**Task**:
+```python
+Write a python function to find the first repeated character in a given string.
+```
+Your code should pass these tests:
+```python
+
+assert first_repeated_char("abcabc") == "a"
+assert first_repeated_char("abc") == "None"
+assert first_repeated_char("123123") == "1"
+```
+
+2026-01-24 00:19:37.918 | INFO     | MAR.MasRouter.mas_router:run_entry:242 - Task: Code
+2026-01-24 00:19:37.918 | INFO     | MAR.MasRouter.mas_router:run_entry:243 - LLMs: ['Qwen/Qwen2.5-3B-Instruct', 'Qwen/Qwen2.5-3B-Instruct', 'Qwen/Qwen2.5-3B-Instruct', 'Qwen/Qwen2.5-3B-Instruct']
+2026-01-24 00:19:37.918 | INFO     | MAR.MasRouter.mas_router:run_entry:242 - Task: Code
+2026-01-24 00:19:37.918 | INFO     | MAR.MasRouter.mas_router:run_entry:244 - Reasoning: CoT
+2026-01-24 00:19:37.918 | INFO     | MAR.MasRouter.mas_router:run_entry:245 - Roles: ['ReflectProgrammer', 'ProgrammingExpert', 'ReflectProgrammer', 'ReflectProgrammer']
+2026-01-24 00:19:37.918 | INFO     | MAR.MasRouter.mas_router:run_entry:242 - Task: Code
+2026-01-24 00:19:37.919 | INFO     | MAR.MasRouter.mas_router:run_entry:243 - LLMs: ['Qwen/Qwen2.5-3B-Instruct', 'mistralai/Mistral-7B-Instruct-v0.3', 'Qwen/Qwen2.5-3B-Instruct', 'Qwen/Qwen2.5-3B-Instruct']
+2026-01-24 00:19:37.919 | INFO     | MAR.MasRouter.mas_router:run_entry:244 - Reasoning: CoT
+2026-01-24 00:19:37.919 | INFO     | MAR.MasRouter.mas_router:run_entry:243 - LLMs: ['Qwen/Qwen2.5-3B-Instruct', 'Qwen/Qwen2.5-3B-Instruct', 'meta-llama/Llama-3.2-3B-Instruct', 'Qwen/Qwen2.5-3B-Instruct']
+2026-01-24 00:19:37.919 | INFO     | MAR.MasRouter.mas_router:run_entry:245 - Roles: ['BugFixer', 'PlanSolver', 'ProjectManager', 'TestAnalyst']
+2026-01-24 00:19:37.919 | INFO     | MAR.MasRouter.mas_router:run_entry:246 - -----------------------------------
+2026-01-24 00:19:37.919 | INFO     | MAR.MasRouter.mas_router:run_entry:243 - LLMs: ['mistralai/Mistral-7B-Instruct-v0.3', 'meta-llama/Llama-3.2-3B-Instruct', 'Qwen/Qwen2.5-3B-Instruct', 'mistralai/Mistral-7B-Instruct-v0.3']
+2026-01-24 00:19:37.919 | INFO     | MAR.MasRouter.mas_router:run_entry:244 - Reasoning: Debate
+2026-01-24 00:19:37.919 | INFO     | MAR.MasRouter.mas_router:run_entry:245 - Roles: ['BugFixer', 'ReflectProgrammer', 'ProgrammingExpert', 'AlgorithmDesigner']
+2026-01-24 00:19:37.919 | INFO     | MAR.MasRouter.mas_router:run_entry:244 - Reasoning: Chain
+2026-01-24 00:19:37.919 | INFO     | MAR.MasRouter.mas_router:run_entry:246 - -----------------------------------
+2026-01-24 00:19:37.920 | INFO     | MAR.MasRouter.mas_router:run_entry:244 - Reasoning: Chain
+2026-01-24 00:19:37.920 | INFO     | MAR.MasRouter.mas_router:run_entry:245 - Roles: ['ProgrammingExpert', 'TestAnalyst', 'ReflectProgrammer', 'PlanSolver']
+2026-01-24 00:19:37.920 | INFO     | MAR.MasRouter.mas_router:run_entry:246 - -----------------------------------
+2026-01-24 00:19:37.920 | INFO     | MAR.MasRouter.mas_router:run_entry:245 - Roles: ['BugFixer', 'AlgorithmDesigner', 'AlgorithmDesigner', 'ProjectManager']
+2026-01-24 00:19:37.921 | INFO     | MAR.MasRouter.mas_router:run_entry:245 - Roles: ['ProjectManager', 'PlanSolver', 'BugFixer', 'ReflectProgrammer']
+2026-01-24 00:19:37.921 | INFO     | MAR.MasRouter.mas_router:run_entry:246 - -----------------------------------
+2026-01-24 00:19:37.922 | INFO     | MAR.MasRouter.mas_router:run_entry:246 - -----------------------------------
+2026-01-24 00:19:37.922 | INFO     | MAR.MasRouter.mas_router:run_entry:246 - -----------------------------------
+2026-01-24 00:20:29.036 | INFO     | __main__:<module>:287 - Batch time 51.138
+2026-01-24 00:20:29.036 | INFO     | __main__:<module>:288 - Accuracy: 0.5
+2026-01-24 00:20:29.036 | INFO     | __main__:<module>:289 - utilities:[0.898064, -0.615044, -0.08134000000000001, 0.890464, 0.9889, -0.31975600000000004]
+2026-01-24 00:20:29.196 | INFO     | __main__:<module>:163 - Epoch 9
+2026-01-24 00:20:29.197 | INFO     | __main__:<module>:170 - Batch 0
+2026-01-24 00:20:29.217 | INFO     | MAR.MasRouter.mas_router:run_entry:241 - Query: 
+**Task**:
+```python
+Write a function to get a lucid number smaller than or equal to n.
+```
+Your code should pass these tests:
+```python
+
+assert get_ludic(10) == [1, 2, 3, 5, 7]
+assert get_ludic(25) == [1, 2, 3, 5, 7, 11, 13, 17, 23, 25]
+assert get_ludic(45) == [1, 2, 3, 5, 7, 11, 13, 17, 23, 25, 29, 37, 41, 43]
+```
+
+2026-01-24 00:20:29.217 | INFO     | MAR.MasRouter.mas_router:run_entry:241 - Query: 
+**Task**:
+```python
+Write a function to reverse words in a given string.
+```
+Your code should pass these tests:
+```python
+
+assert reverse_words("python program")==("program python")
+assert reverse_words("java language")==("language java")
+assert reverse_words("indian man")==("man indian")
+```
+
+2026-01-24 00:20:29.218 | INFO     | MAR.MasRouter.mas_router:run_entry:242 - Task: Code
+2026-01-24 00:20:29.218 | INFO     | MAR.MasRouter.mas_router:run_entry:241 - Query: 
+**Task**:
+```python
+Write a python function to find the first repeated character in a given string.
+```
+Your code should pass these tests:
+```python
+
+assert first_repeated_char("abcabc") == "a"
+assert first_repeated_char("abc") == "None"
+assert first_repeated_char("123123") == "1"
+```
+
+2026-01-24 00:20:29.219 | INFO     | MAR.MasRouter.mas_router:run_entry:242 - Task: Code
+2026-01-24 00:20:29.219 | INFO     | MAR.MasRouter.mas_router:run_entry:241 - Query: 
+**Task**:
+```python
+Write a function to convert degrees to radians.
+```
+Your code should pass these tests:
+```python
+
+assert radian_degree(90)==1.5707963267948966
+assert radian_degree(60)==1.0471975511965976
+assert radian_degree(120)==2.0943951023931953
+```
+
+2026-01-24 00:20:29.219 | INFO     | MAR.MasRouter.mas_router:run_entry:243 - LLMs: ['Qwen/Qwen2.5-3B-Instruct', 'Qwen/Qwen2.5-3B-Instruct', 'mistralai/Mistral-7B-Instruct-v0.3', 'Qwen/Qwen2.5-3B-Instruct', 'Qwen/Qwen2.5-3B-Instruct']
+2026-01-24 00:20:29.219 | INFO     | MAR.MasRouter.mas_router:run_entry:242 - Task: Code
+2026-01-24 00:20:29.219 | INFO     | MAR.MasRouter.mas_router:run_entry:241 - Query: 
+**Task**:
+```python
+Write a function to find the longest chain which can be formed from the given set of pairs.
+```
+Your code should pass these tests:
+```python
+
+assert max_chain_length([Pair(5, 24), Pair(15, 25),Pair(27, 40), Pair(50, 60)], 4) == 3
+assert max_chain_length([Pair(1, 2), Pair(3, 4),Pair(5, 6), Pair(7, 8)], 4) == 4
+assert max_chain_length([Pair(19, 10), Pair(11, 12),Pair(13, 14), Pair(15, 16), Pair(31, 54)], 5) == 5
+```
+
+2026-01-24 00:20:29.220 | INFO     | MAR.MasRouter.mas_router:run_entry:241 - Query: 
+**Task**:
+```python
+Write a function to check if the given integer is a prime number.
+```
+Your code should pass these tests:
+```python
+
+assert prime_num(13)==True
+assert prime_num(7)==True
+assert prime_num(-1010)==False
+```
+
+2026-01-24 00:20:29.220 | INFO     | MAR.MasRouter.mas_router:run_entry:243 - LLMs: ['Qwen/Qwen2.5-3B-Instruct', 'Qwen/Qwen2.5-3B-Instruct', 'Qwen/Qwen2.5-3B-Instruct', 'Qwen/Qwen2.5-3B-Instruct', 'meta-llama/Llama-3.2-3B-Instruct']
+2026-01-24 00:20:29.220 | INFO     | MAR.MasRouter.mas_router:run_entry:242 - Task: Code
+2026-01-24 00:20:29.220 | INFO     | MAR.MasRouter.mas_router:run_entry:244 - Reasoning: Debate
+2026-01-24 00:20:29.220 | INFO     | MAR.MasRouter.mas_router:run_entry:243 - LLMs: ['Qwen/Qwen2.5-3B-Instruct', 'Qwen/Qwen2.5-3B-Instruct', 'mistralai/Mistral-7B-Instruct-v0.3', 'meta-llama/Llama-3.2-3B-Instruct', 'Qwen/Qwen2.5-3B-Instruct']
+2026-01-24 00:20:29.220 | INFO     | MAR.MasRouter.mas_router:run_entry:242 - Task: Code
+2026-01-24 00:20:29.220 | INFO     | MAR.MasRouter.mas_router:run_entry:242 - Task: Code
+2026-01-24 00:20:29.220 | INFO     | MAR.MasRouter.mas_router:run_entry:244 - Reasoning: CoT
+2026-01-24 00:20:29.220 | INFO     | MAR.MasRouter.mas_router:run_entry:243 - LLMs: ['Qwen/Qwen2.5-3B-Instruct', 'Qwen/Qwen2.5-3B-Instruct', 'Qwen/Qwen2.5-3B-Instruct', 'Qwen/Qwen2.5-3B-Instruct', 'Qwen/Qwen2.5-3B-Instruct']
+2026-01-24 00:20:29.220 | INFO     | MAR.MasRouter.mas_router:run_entry:245 - Roles: ['TestAnalyst', 'ReflectProgrammer', 'TestAnalyst', 'BugFixer', 'AlgorithmDesigner']
+2026-01-24 00:20:29.220 | INFO     | MAR.MasRouter.mas_router:run_entry:244 - Reasoning: Chain
+2026-01-24 00:20:29.221 | INFO     | MAR.MasRouter.mas_router:run_entry:243 - LLMs: ['Qwen/Qwen2.5-3B-Instruct', 'Qwen/Qwen2.5-3B-Instruct', 'Qwen/Qwen2.5-3B-Instruct', 'Qwen/Qwen2.5-3B-Instruct', 'Qwen/Qwen2.5-3B-Instruct']
+2026-01-24 00:20:29.221 | INFO     | MAR.MasRouter.mas_router:run_entry:243 - LLMs: ['Qwen/Qwen2.5-3B-Instruct', 'Qwen/Qwen2.5-3B-Instruct', 'Qwen/Qwen2.5-3B-Instruct', 'mistralai/Mistral-7B-Instruct-v0.3', 'Qwen/Qwen2.5-3B-Instruct']
+2026-01-24 00:20:29.221 | INFO     | MAR.MasRouter.mas_router:run_entry:245 - Roles: ['BugFixer', 'ProjectManager', 'BugFixer', 'PlanSolver', 'ProgrammingExpert']
+2026-01-24 00:20:29.221 | INFO     | MAR.MasRouter.mas_router:run_entry:244 - Reasoning: FullConnected
+2026-01-24 00:20:29.221 | INFO     | MAR.MasRouter.mas_router:run_entry:246 - -----------------------------------
+2026-01-24 00:20:29.221 | INFO     | MAR.MasRouter.mas_router:run_entry:245 - Roles: ['ProjectManager', 'ProjectManager', 'ProgrammingExpert', 'AlgorithmDesigner', 'ProgrammingExpert']
+2026-01-24 00:20:29.221 | INFO     | MAR.MasRouter.mas_router:run_entry:244 - Reasoning: Reflection
+2026-01-24 00:20:29.221 | INFO     | MAR.MasRouter.mas_router:run_entry:244 - Reasoning: IO
+2026-01-24 00:20:29.221 | INFO     | MAR.MasRouter.mas_router:run_entry:246 - -----------------------------------
+2026-01-24 00:20:29.221 | INFO     | MAR.MasRouter.mas_router:run_entry:245 - Roles: ['TestAnalyst', 'ReflectProgrammer', 'PlanSolver', 'BugFixer', 'PlanSolver']
+2026-01-24 00:20:29.222 | INFO     | MAR.MasRouter.mas_router:run_entry:246 - -----------------------------------
+2026-01-24 00:20:29.222 | INFO     | MAR.MasRouter.mas_router:run_entry:245 - Roles: ['TestAnalyst', 'TestAnalyst', 'TestAnalyst', 'PlanSolver', 'PlanSolver']
+2026-01-24 00:20:29.222 | INFO     | MAR.MasRouter.mas_router:run_entry:245 - Roles: ['ProgrammingExpert', 'PlanSolver', 'ReflectProgrammer', 'TestAnalyst', 'TestAnalyst']
+2026-01-24 00:20:29.222 | INFO     | MAR.MasRouter.mas_router:run_entry:246 - -----------------------------------
+2026-01-24 00:20:29.223 | INFO     | MAR.MasRouter.mas_router:run_entry:246 - -----------------------------------
+2026-01-24 00:20:29.223 | INFO     | MAR.MasRouter.mas_router:run_entry:246 - -----------------------------------

@@ -1,6 +1,9 @@
 import aiohttp
+import asyncio
+import atexit
+import threading
 from typing import List, Union, Optional
-from tenacity import retry, wait_random_exponential, stop_after_attempt
+from tenacity import retry, wait_random_exponential, stop_after_attempt, retry_if_not_exception_type
 from typing import Dict, Any
 from dotenv import load_dotenv
 import os
@@ -11,6 +14,16 @@ from functools import lru_cache
 from groq import Groq, AsyncGroq
 from openai import OpenAI, AsyncOpenAI
 
+try:
+    from openai import APITimeoutError
+except Exception:  # pragma: no cover - optional import
+    APITimeoutError = None
+
+try:
+    import httpx
+except Exception:  # pragma: no cover - optional import
+    httpx = None
+
 from MAR.LLM.price import cost_count
 from MAR.LLM.llm import LLM
 from MAR.LLM.llm_registry import LLMRegistry
@@ -18,6 +31,33 @@ from MAR.LLM.llm_registry import LLMRegistry
 load_dotenv()
 MINE_BASE_URL = os.getenv('BASE_URL')
 MINE_API_KEYS = os.getenv('API_KEY')
+
+_SYNC_CLIENT_LOCK = threading.Lock()
+_SYNC_CLIENTS: Dict[tuple[str, str], OpenAI] = {}
+
+
+def _get_shared_sync_client(*, base_url: Optional[str], api_key: str) -> OpenAI:
+    # Keep one OpenAI sync client per (base_url, api_key) to reuse HTTP connection pooling.
+    key = ((base_url or "").strip(), (api_key or "").strip())
+    with _SYNC_CLIENT_LOCK:
+        client = _SYNC_CLIENTS.get(key)
+        if client is None:
+            client = OpenAI(base_url=base_url, api_key=api_key)
+            _SYNC_CLIENTS[key] = client
+    return client
+
+
+@atexit.register
+def _close_shared_sync_clients() -> None:
+    # Best-effort cleanup; prevents dangling sockets/FDS on long runs.
+    with _SYNC_CLIENT_LOCK:
+        clients = list(_SYNC_CLIENTS.values())
+        _SYNC_CLIENTS.clear()
+    for client in clients:
+        try:
+            client.close()
+        except Exception:
+            pass
 
 def _project_root() -> Path:
     return Path(__file__).resolve().parents[2]
@@ -33,6 +73,7 @@ def _get_test_config() -> Dict[str, Any]:
     """
     candidates = [
         _project_root() / "config_test.json",
+        _project_root() / "MAR" / "LLM" / "llm_profile_full.json",
         _project_root() / "logs" / "vllm" / "model_base_urls.json",
     ]
 
@@ -140,19 +181,63 @@ def _resolve_base_url(model_name: str) -> Optional[str]:
         return per_model[model_name]
     return os.environ.get("URL")
 
+def _default_request_timeout() -> Optional[float]:
+    raw = os.environ.get("LLM_REQUEST_TIMEOUT", "").strip()
+    if not raw:
+        return 120.0
+    try:
+        timeout = float(raw)
+    except ValueError:
+        return 120.0
+    if timeout <= 0:
+        return None
+    return timeout
+
+
+def _normalize_request_timeout(request_timeout: Optional[float]) -> Optional[float]:
+    if request_timeout is None:
+        return _default_request_timeout()
+    try:
+        timeout = float(request_timeout)
+    except (TypeError, ValueError):
+        return _default_request_timeout()
+    if timeout <= 0:
+        return None
+    return timeout
+
+
+_TIMEOUT_EXCEPTIONS = [TimeoutError, asyncio.TimeoutError, requests.exceptions.Timeout]
+if APITimeoutError is not None:
+    _TIMEOUT_EXCEPTIONS.append(APITimeoutError)
+if httpx is not None:
+    _TIMEOUT_EXCEPTIONS.append(httpx.TimeoutException)
+_TIMEOUT_EXCEPTIONS = tuple(_TIMEOUT_EXCEPTIONS)
+
+
+def _is_timeout_error(exc: BaseException) -> bool:
+    if isinstance(exc, _TIMEOUT_EXCEPTIONS):
+        return True
+    message = str(exc).lower()
+    return "timeout" in message or "timed out" in message
+
 
 @LLMRegistry.register('ALLChat')
 class ALLChat(LLM):
     def __init__(self, model_name: str):
         self.model_name = model_name
     
-    @retry(wait=wait_random_exponential(max=100), stop=stop_after_attempt(10))
+    @retry(
+        wait=wait_random_exponential(max=100),
+        stop=stop_after_attempt(10),
+        retry=retry_if_not_exception_type(_TIMEOUT_EXCEPTIONS),
+    )
     def gen(
         self,
         messages: Union[List[Dict], str],
         max_tokens: Optional[int] = None,
         temperature: Optional[float] = None,
         num_comps: Optional[int] = None,
+        request_timeout: Optional[float] = None,
         ) -> Union[List[str], str]:
         if max_tokens is None:
             max_tokens = self.DEFAULT_MAX_TOKENS
@@ -163,14 +248,25 @@ class ALLChat(LLM):
 
         if isinstance(messages, str):
             messages = [{'role':"user", 'content':messages}]
-        client = OpenAI(
-            base_url=_resolve_base_url(self.model_name),
-            api_key=_resolve_api_key(),
-        )
-        chat_completion = client.chat.completions.create(
-        messages = messages,
-        model = self.model_name,
-        )
+        timeout = _normalize_request_timeout(request_timeout)
+        base_client = None
+        try:
+            base_client = _get_shared_sync_client(
+                base_url=_resolve_base_url(self.model_name),
+                api_key=_resolve_api_key(),
+            )
+            client = base_client.with_options(timeout=timeout)
+            chat_completion = client.chat.completions.create(
+                messages=messages,
+                model=self.model_name,
+                max_tokens=max_tokens,
+                temperature=temperature,
+                n=num_comps,
+            )
+        except Exception as exc:
+            if _is_timeout_error(exc):
+                raise TimeoutError("LLM request timed out") from exc
+            raise
         response = chat_completion.choices[0].message.content
         prompt = "".join([item['content'] for item in messages])
         cost_count(prompt, response, self.model_name)
@@ -182,6 +278,7 @@ class ALLChat(LLM):
         max_tokens: Optional[int] = None,
         temperature: Optional[float] = None,
         num_comps: Optional[int] = None,
+        request_timeout: Optional[float] = None,
         ) -> Union[List[str], str]:
 
         if max_tokens is None:
@@ -194,16 +291,30 @@ class ALLChat(LLM):
         if isinstance(messages, str):
             messages = [{'role':"user", 'content':messages}]
         
-        client = AsyncOpenAI(
-            base_url=_resolve_base_url(self.model_name),
-            api_key=_resolve_api_key(),
-        )
-        chat_completion = await client.chat.completions.create(
-        messages = messages,
-        model = self.model_name,
-        max_tokens = max_tokens,
-        temperature = temperature,
-        )
+        timeout = _normalize_request_timeout(request_timeout)
+        client = None
+        try:
+            client = AsyncOpenAI(
+                base_url=_resolve_base_url(self.model_name),
+                api_key=_resolve_api_key(),
+                timeout=timeout,
+            )
+            chat_completion = await client.chat.completions.create(
+                messages=messages,
+                model=self.model_name,
+                max_tokens=max_tokens,
+                temperature=temperature,
+            )
+        except Exception as exc:
+            if _is_timeout_error(exc):
+                raise TimeoutError("LLM request timed out") from exc
+            raise
+        finally:
+            if client is not None:
+                try:
+                    await client.close()
+                except Exception:
+                    pass
         response = chat_completion.choices[0].message.content
 
         return response
@@ -214,13 +325,18 @@ class DSChat(LLM):
     def __init__(self, model_name: str):
         self.model_name = model_name
     
-    @retry(wait=wait_random_exponential(max=100), stop=stop_after_attempt(10))
+    @retry(
+        wait=wait_random_exponential(max=100),
+        stop=stop_after_attempt(10),
+        retry=retry_if_not_exception_type(_TIMEOUT_EXCEPTIONS),
+    )
     def gen(
         self,
         messages: Union[List[Dict], str],
         max_tokens: Optional[int] = None,
         temperature: Optional[float] = None,
         num_comps: Optional[int] = None,
+        request_timeout: Optional[float] = None,
         ) -> Union[List[str], str]:
         if max_tokens is None:
             max_tokens = self.DEFAULT_MAX_TOKENS
@@ -231,12 +347,25 @@ class DSChat(LLM):
 
         if isinstance(messages, str):
             messages = [{'role':"user", 'content':messages}]
-        client = OpenAI(base_url = os.environ.get("DS_URL"),
-                        api_key = os.environ.get("DS_KEY"))
-        chat_completion = client.chat.completions.create(
-        messages = messages,
-        model = self.model_name,
-        )
+        timeout = _normalize_request_timeout(request_timeout)
+        base_client = None
+        try:
+            base_client = _get_shared_sync_client(
+                base_url=os.environ.get("DS_URL"),
+                api_key=os.environ.get("DS_KEY") or "",
+            )
+            client = base_client.with_options(timeout=timeout)
+            chat_completion = client.chat.completions.create(
+                messages=messages,
+                model=self.model_name,
+                max_tokens=max_tokens,
+                temperature=temperature,
+                n=num_comps,
+            )
+        except Exception as exc:
+            if _is_timeout_error(exc):
+                raise TimeoutError("LLM request timed out") from exc
+            raise
         response = chat_completion.choices[0].message.content
         prompt = "".join([item['content'] for item in messages])
         cost_count(prompt, response, self.model_name)
@@ -248,6 +377,7 @@ class DSChat(LLM):
         max_tokens: Optional[int] = None,
         temperature: Optional[float] = None,
         num_comps: Optional[int] = None,
+        request_timeout: Optional[float] = None,
         ) -> Union[List[str], str]:
 
         if max_tokens is None:
@@ -260,14 +390,30 @@ class DSChat(LLM):
         if isinstance(messages, str):
             messages = [{'role':"user", 'content':messages}]
         
-        client = AsyncOpenAI(base_url = os.environ.get("DS_URL"),
-                             api_key = os.environ.get("DS_KEY"),)
-        chat_completion = await client.chat.completions.create(
-        messages = messages,
-        model = self.model_name,
-        max_tokens = max_tokens,
-        temperature = temperature,
-        )
+        timeout = _normalize_request_timeout(request_timeout)
+        client = None
+        try:
+            client = AsyncOpenAI(
+                base_url=os.environ.get("DS_URL"),
+                api_key=os.environ.get("DS_KEY"),
+                timeout=timeout,
+            )
+            chat_completion = await client.chat.completions.create(
+                messages=messages,
+                model=self.model_name,
+                max_tokens=max_tokens,
+                temperature=temperature,
+            )
+        except Exception as exc:
+            if _is_timeout_error(exc):
+                raise TimeoutError("LLM request timed out") from exc
+            raise
+        finally:
+            if client is not None:
+                try:
+                    await client.close()
+                except Exception:
+                    pass
         response = chat_completion.choices[0].message.content
 
         return response
@@ -275,7 +421,9 @@ class DSChat(LLM):
 @retry(wait=wait_random_exponential(max=100), stop=stop_after_attempt(10))
 async def achat(
     model: str,
-    msg: List[Dict],):
+    msg: List[Dict],
+    request_timeout: Optional[float] = None,
+    ):
     request_url = MINE_BASE_URL
     authorization_key = MINE_API_KEYS
     headers = {
@@ -289,8 +437,10 @@ async def achat(
             "msg": repr(msg),
         }
     }
-    async with aiohttp.ClientSession() as session:
-        async with session.post(request_url, headers=headers ,json=data) as response:
+    timeout = _normalize_request_timeout(request_timeout)
+    client_timeout = aiohttp.ClientTimeout(total=timeout) if timeout else None
+    async with aiohttp.ClientSession(timeout=client_timeout) as session:
+        async with session.post(request_url, headers=headers, json=data) as response:
             response_data = await response.json()
             if isinstance(response_data['data'],str):
                 prompt = "".join([item['content'] for item in msg])
@@ -302,7 +452,9 @@ async def achat(
 @retry(wait=wait_random_exponential(max=100), stop=stop_after_attempt(10))   
 def chat(
     model: str,
-    msg: List[Dict],):
+    msg: List[Dict],
+    request_timeout: Optional[float] = None,
+    ):
     request_url = MINE_BASE_URL
     authorization_key = MINE_API_KEYS
     headers = {
@@ -316,7 +468,8 @@ def chat(
             "msg": repr(msg),
         }
     }
-    response = requests.post(request_url, headers=headers ,json=data)
+    timeout = _normalize_request_timeout(request_timeout)
+    response = requests.post(request_url, headers=headers, json=data, timeout=timeout)
     response_data = response.json()
     if isinstance(response_data['data'],str):
         prompt = "".join([item['content'] for item in msg])
@@ -336,6 +489,7 @@ class GPTChat(LLM):
         max_tokens: Optional[int] = None,
         temperature: Optional[float] = None,
         num_comps: Optional[int] = None,
+        request_timeout: Optional[float] = None,
         ) -> Union[List[str], str]:
 
         if max_tokens is None:
@@ -347,7 +501,7 @@ class GPTChat(LLM):
         
         if isinstance(messages, str):
             messages = [{'role':"user", 'content':messages}]
-        return await achat(self.model_name,messages)
+        return await achat(self.model_name, messages, request_timeout=request_timeout)
     
     def gen(
         self,
@@ -355,6 +509,7 @@ class GPTChat(LLM):
         max_tokens: Optional[int] = None,
         temperature: Optional[float] = None,
         num_comps: Optional[int] = None,
+        request_timeout: Optional[float] = None,
         ) -> Union[List[str], str]:
         
         if max_tokens is None:
@@ -366,7 +521,7 @@ class GPTChat(LLM):
 
         if isinstance(messages, str):
             messages = [{'role':"user", 'content':messages}]
-        return chat(self.model_name,messages)
+        return chat(self.model_name, messages, request_timeout=request_timeout)
     
 
 @LLMRegistry.register('Groq')
@@ -381,6 +536,7 @@ class GroqChat(LLM):
         max_tokens: Optional[int] = None,
         temperature: Optional[float] = None,
         num_comps: Optional[int] = None,
+        request_timeout: Optional[float] = None,
         ) -> Union[List[str], str]:
         # TODO: Add num_comps to the request
         if max_tokens is None:
@@ -409,6 +565,7 @@ class GroqChat(LLM):
         max_tokens: Optional[int] = None,
         temperature: Optional[float] = None,
         num_comps: Optional[int] = None,
+        request_timeout: Optional[float] = None,
         ) -> Union[List[str], str]:
         # TODO: Add num_comps to the request
         if max_tokens is None:
@@ -445,6 +602,7 @@ class OpenRouterChat(LLM):
         max_tokens: Optional[int] = None,
         temperature: Optional[float] = None,
         num_comps: Optional[int] = None,
+        request_timeout: Optional[float] = None,
         ) -> Union[List[str], str]:
         if max_tokens is None:
             max_tokens = self.DEFAULT_MAX_TOKENS
@@ -455,11 +613,15 @@ class OpenRouterChat(LLM):
 
         if isinstance(messages, str):
             messages = [{'role':"user", 'content':messages}]
-        client = OpenAI(base_url = os.environ.get("OPENROUTER_BASE_URL"),
-                        api_key = os.environ.get("OPENROUTER_API_KEY"),)
+        timeout = _normalize_request_timeout(request_timeout)
+        client = OpenAI(
+            base_url=os.environ.get("OPENROUTER_BASE_URL"),
+            api_key=os.environ.get("OPENROUTER_API_KEY"),
+            timeout=timeout,
+        )
         chat_completion = client.chat.completions.create(
-        messages = messages,
-        model = self.model_name,
+            messages=messages,
+            model=self.model_name,
         )
         response = chat_completion.choices[0].message.content
         return response

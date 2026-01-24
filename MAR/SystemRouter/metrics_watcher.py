@@ -36,15 +36,15 @@ def fetch_vllm_metrics(model_name: str, url: str) -> None:
             curr["num_requests_running"] = value
         elif line.startswith("vllm:num_requests_waiting"):
             curr["num_requests_waiting"] = value
-        elif line.startswith("vllm:kv_cache_usage_perc"):
+        elif line.startswith("vllm:gpu_cache_usage_perc"):
             curr["kv_cache_usage_perc"] = value
         elif line.startswith("vllm:time_to_first_token_seconds_sum"):
             curr["ttft_sum"] = value
         elif line.startswith("vllm:time_to_first_token_seconds_count"):
             curr["ttft_count"] = value
-        elif line.startswith("vllm:inter_token_latency_seconds_sum"):
+        elif line.startswith("vllm:time_per_output_token_seconds_sum"):
             curr["itl_sum"] = value
-        elif line.startswith("vllm:inter_token_latency_seconds_count"):
+        elif line.startswith("vllm:time_per_output_token_seconds_count"):
             curr["itl_count"] = value
         elif line.startswith("vllm:e2e_request_latency_seconds_sum"):
             curr["e2e_sum"] = value
@@ -52,6 +52,7 @@ def fetch_vllm_metrics(model_name: str, url: str) -> None:
             curr["e2e_count"] = value
 
     prev = _prev_values.get(model_name, {})
+    prev_snapshot = model_metrics.get(model_name, {})
     data: Dict[str, float] = {}
 
     for prefix in ("ttft", "itl", "e2e"):
@@ -61,7 +62,10 @@ def fetch_vllm_metrics(model_name: str, url: str) -> None:
 
         delta_sum = cur_sum - prev_sum
         delta_cnt = cur_cnt - prev_cnt
-        avg = (delta_sum / delta_cnt) if delta_cnt > 0 else 0.0
+        if delta_cnt > 0:
+            avg = delta_sum / delta_cnt
+        else:
+            avg = float(prev_snapshot.get(f"{prefix}_avg", 0.0))
 
         data[f"{prefix}_avg"] = avg
         data[sum_key] = cur_sum

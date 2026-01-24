@@ -57,8 +57,6 @@ def parse_args():
     parser.add_argument('--start_epoch', type=int, default=0)
     parser.add_argument('--cost_rate', type=float, default=200.0)
     parser.add_argument('--max_agent', type=int, default=6)
-    parser.add_argument('--variant', type=str, default='baseline', choices=['baseline', 'modified'],
-                        help="Run variant: baseline (static LLMs) or modified (runtime LLMs + latency budget).")
     args = parser.parse_args()
     return args
 
@@ -68,6 +66,8 @@ if __name__ == '__main__':
     fix_random_seed(1234)
     dataset = JSONLReader().parse_file("Datasets/gsm8k/gsm8k.jsonl")
     dataset = gsm_data_process(dataset)
+    for i, item in enumerate(dataset):
+        item['id'] = i
     train_dataset, test_dataset = split_list(dataset, 0.2)
 
     current_time = time.strftime("%Y-%m-%d-%H-%M-%S", time.localtime())
@@ -95,6 +95,7 @@ if __name__ == '__main__':
             current_batch = dataloader(train_dataset, args.batch_size,i_batch)
             queries = [item['task'] for item in current_batch]
             answers = [item['answer'] for item in current_batch]
+            item_ids = [item['id'] for item in current_batch]
             task_labels = [0 for _ in current_batch]
             tasks_y = torch.tensor(task_labels).to(device)
             optimizer.zero_grad()
@@ -104,7 +105,8 @@ if __name__ == '__main__':
                 llms,
                 reasonings,
                 task_labels,
-                variant=args.variant,
+                item_ids=item_ids,
+                dataset=args.domain,
             )
 
             task_loss = F.cross_entropy(tasks_probs, tasks_y)
@@ -170,7 +172,6 @@ if __name__ == '__main__':
             split="test",
             batch_id=i_batch,
             run_id=current_time,
-            variant=args.variant,
         )
         utilities = []
         for item_id, result, true_answer, log_prob, cost in zip(item_ids, results, answers, log_probs, costs):

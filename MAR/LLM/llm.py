@@ -2,7 +2,7 @@ from abc import ABC, abstractmethod
 from typing import List, Union, Optional,Dict
 
 class LLM(ABC):
-    DEFAULT_MAX_TOKENS = 81920
+    DEFAULT_MAX_TOKENS = 4096
     DEFAULT_TEMPERATURE = 1
     DEFUALT_NUM_COMPLETIONS = 1
 
@@ -13,6 +13,7 @@ class LLM(ABC):
         max_tokens: Optional[int] = None,
         temperature: Optional[float] = None,
         num_comps: Optional[int] = None,
+        request_timeout: Optional[float] = None,
         ) -> Union[List[str], str]:
 
         pass
@@ -24,6 +25,7 @@ class LLM(ABC):
         max_tokens: Optional[int] = None,
         temperature: Optional[float] = None,
         num_comps: Optional[int] = None,
+        request_timeout: Optional[float] = None,
         ) -> Union[List[str], str]:
 
         pass

@@ -1,22 +1,43 @@
 import glob
-import pandas as pd
-from typing import Union, List, Literal, Any, Dict
+import os
+from pathlib import Path
+from typing import Union, List, Literal, Any, Dict, Optional
+
 import numpy as np
+import pandas as pd
 from abc import ABC
 
 class MMLUDataset(ABC):
     def __init__(self,
         split: Union[Literal['dev'], Literal['val'], Literal['test']],
+        data_root: Optional[str] = None,
         ) -> None:
 
         self._split = split
 
-        data_path = f"datasets/MMLU/data/{self._split}/"
+        data_path = self._resolve_data_path(self._split, data_root)
         self._total_df: pd.DataFrame = self._load_data(data_path)
 
     @staticmethod
     def get_domain() -> str:
         return 'mmlu'
+
+    @staticmethod
+    def _resolve_data_path(split: str, data_root: Optional[str]) -> str:
+        if data_root:
+            root = Path(data_root)
+            if root.is_dir() and root.name != split:
+                root = root / split
+            return f"{root}{os.sep}"
+
+        candidates = [
+            Path("Datasets") / "MMLU" / "data" / split,
+            Path("datasets") / "MMLU" / "data" / split,
+        ]
+        for path in candidates:
+            if path.is_dir():
+                return f"{path}{os.sep}"
+        return f"{candidates[0]}{os.sep}"
 
     @staticmethod
     def _load_data(

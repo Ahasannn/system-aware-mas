@@ -2,6 +2,7 @@ import shortuuid
 from typing import Any, List, Optional, Dict, Tuple
 from abc import ABC
 import time
+import threading
 import numpy as np
 import torch
 import asyncio
@@ -255,6 +256,7 @@ class Graph(ABC):
         num_rounds: int = 2,
         max_tries: int = 3,
         max_time: int = 100,
+        request_timeout: Optional[float] = None,
         trace: Optional[GraphTrace] = None,
     ) -> Tuple[List[Any], Any]:
         if trace is not None:
@@ -291,6 +293,10 @@ class Graph(ABC):
             return ""
 
         log_probs = 0
+        step_counter = 0
+        llm_elapsed_seconds = 0.0
+        transitions: Dict[Tuple[int, str], Dict[str, Any]] = {}
+        transitions_lock = threading.Lock()
         workflow_error = ""
         try:
             usage_tracker = LLMUsageTracker.instance()
@@ -300,10 +306,28 @@ class Graph(ABC):
 
                 in_degree = {node_id: len(node.spatial_predecessors) for node_id, node in self.nodes.items()}
                 zero_in_degree_queue = [node_id for node_id, deg in in_degree.items() if deg == 0]
+                wave_idx = 0
 
                 while zero_in_degree_queue:
                     current_wave_ids = zero_in_degree_queue
                     zero_in_degree_queue = []
+                    wave_step_indices = {
+                        node_id: step_counter + offset for offset, node_id in enumerate(current_wave_ids)
+                    }
+                    step_counter += len(current_wave_ids)
+
+                    for node_id in current_wave_ids:
+                        node = self.nodes[node_id]
+                        transitions[(round, node_id)] = {
+                            "step_index": wave_step_indices[node_id],
+                            "round_index": round,
+                            "wave_index": wave_idx,
+                            "node_id": node_id,
+                            "role_name": _safe_role_name(node),
+                            "llm_name": "",
+                            "latency_seconds": 0.0,
+                            "llm_elapsed_seconds": float(llm_elapsed_seconds),
+                        }
 
                     def run_node(node_id: str) -> None:
                         ts_start = utc_now_iso()
@@ -315,24 +339,36 @@ class Graph(ABC):
                         tries = 0
                         success = False
                         error_msg = ""
+                        timed_out = False
                         try:
                             while tries < max_tries:
                                 tries += 1
                                 try:
                                     self._assign_runtime_llm(node_id)
-                                    self.nodes[node_id].execute(inputs)  # output is saved in the node.outputs
+                                    self.nodes[node_id].execute(
+                                        inputs,
+                                        request_timeout=request_timeout,
+                                    )  # output is saved in the node.outputs
                                     success = True
                                     break
                                 except Exception as e:
                                     error_msg = str(e)
+                                    if isinstance(e, TimeoutError):
+                                        timed_out = True
+                                        break
                                     print(f"Error during execution of node {node_id}: {e}")
                         finally:
                             usage = usage_tracker.consume(usage_key)
                             usage_tracker.reset_context(context_token)
                         ts_end = utc_now_iso()
                         duration_sec = time.perf_counter() - start_perf
+                        node = self.nodes[node_id]
+                        with transitions_lock:
+                            transition = transitions.get((round, node_id))
+                            if transition is not None:
+                                transition["llm_name"] = _safe_llm_name(node)
+                                transition["latency_seconds"] = duration_sec
                         if trace is not None:
-                            node = self.nodes[node_id]
                             output_text = ""
                             trace.record_node_event(
                                 NodeTiming(
@@ -354,6 +390,8 @@ class Graph(ABC):
                                     output_text=output_text,
                                 )
                             )
+                        if timed_out:
+                            raise TimeoutError(error_msg or "LLM request timed out")
 
                     max_workers = len(current_wave_ids)
                     if max_workers <= 1:
@@ -372,6 +410,15 @@ class Graph(ABC):
                             in_degree[successor.id] -= 1
                             if in_degree[successor.id] == 0:
                                 zero_in_degree_queue.append(successor.id)
+                    wave_max_latency = 0.0
+                    for node_id in current_wave_ids:
+                        transition = transitions.get((round, node_id))
+                        if transition:
+                            latency = float(transition.get("latency_seconds", 0.0))
+                            if latency > wave_max_latency:
+                                wave_max_latency = latency
+                    llm_elapsed_seconds += wave_max_latency
+                    wave_idx += 1
                 self.update_memory()
 
             self.connect_decision_node()
@@ -385,7 +432,7 @@ class Graph(ABC):
             decision_success = False
             decision_error = ""
             try:
-                self.decision_node.execute(inputs)
+                self.decision_node.execute(inputs, request_timeout=request_timeout)
                 decision_success = True
             except Exception as e:
                 decision_error = str(e)
@@ -429,6 +476,9 @@ class Graph(ABC):
         finally:
             if trace is not None:
                 trace.end_workflow(success=(workflow_error == ""), error=workflow_error)
+            ordered_transitions = sorted(transitions.values(), key=lambda item: item["step_index"])
+            setattr(self, "last_llm_elapsed_seconds", float(llm_elapsed_seconds))
+            setattr(self, "last_transitions", ordered_transitions)
 
     async def arun(
         self,
