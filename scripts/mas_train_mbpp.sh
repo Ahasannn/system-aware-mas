@@ -12,13 +12,11 @@ export MBPP_DATASET_PATH="${BLUE_STORAGE}/datasets/mbpp/full"
 # vLLM API configuration (EMPTY means no authentication required)
 export KEY="EMPTY"
 
-# Clear Python cache to ensure fresh configuration
-export PYTHONDONTWRITEBYTECODE=1
-
 python Experiments/run_mbpp.py \
   --epochs 1 \
   --batch_size 16 \
+  --train_limit 300 \
   --lr 0.01 \
   --test_limit 1 \
-  --train-telemetry-csv logs/my_train_output_full.csv \
-  --save-checkpoint "${CHECKPOINT_DIR}/mas_mbpp_train_full.pth"
+  --train-telemetry-csv logs/my_train_output_full_300.csv \
+  --save-checkpoint "${CHECKPOINT_DIR}/mas_mbpp_train_full_300.pth"

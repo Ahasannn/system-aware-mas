@@ -122,17 +122,6 @@ _get_port_from_url() {
   echo "$url" | sed -n 's|.*:\([0-9]*\)/.*|\1|p'
 }
 
-# Legacy: also write to model_base_urls.json for backward compatibility
-MODEL_BASE_URLS_FILE="${MODEL_BASE_URLS_FILE:-${LOG_DIR}/model_base_urls.json}"
-
-cat >"${MODEL_BASE_URLS_FILE}" <<EOF
-{
-  "Qwen/Qwen2.5-3B-Instruct": "http://127.0.0.1:${VLLM_QWEN_PORT}/v1",
-  "meta-llama/Llama-3.2-3B-Instruct": "http://127.0.0.1:${VLLM_LLAMA_PORT}/v1",
-  "mistralai/Mistral-7B-Instruct-v0.3": "http://127.0.0.1:${VLLM_MISTRAL_PORT}/v1"
-}
-EOF
-
 API_KEY_FLAGS=()
 if [[ -n "${VLLM_API_KEY}" ]]; then
   API_KEY_FLAGS=(--api-key "${VLLM_API_KEY}")

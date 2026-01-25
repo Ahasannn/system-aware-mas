@@ -61,13 +61,13 @@ else
 fi
 echo ""
 
-# Check model_base_urls.json
+# Check llm_profile_full.json
 echo "[6] Model Configuration:"
-if [ -f "logs/vllm/model_base_urls.json" ]; then
-    echo "  ✓ logs/vllm/model_base_urls.json exists"
-    cat logs/vllm/model_base_urls.json | python3 -m json.tool 2>/dev/null || cat logs/vllm/model_base_urls.json
+if [ -f "MAR/LLM/llm_profile_full.json" ]; then
+    echo "  ✓ MAR/LLM/llm_profile_full.json exists"
+    python3 -c "import json; d=json.load(open('MAR/LLM/llm_profile_full.json')); print(json.dumps(d.get('model_base_urls', {}), indent=2))"
 else
-    echo "  ✗ logs/vllm/model_base_urls.json not found"
+    echo "  ✗ MAR/LLM/llm_profile_full.json not found"
 fi
 echo ""
 

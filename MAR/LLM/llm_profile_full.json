@@ -18,7 +18,7 @@
         "tensor_parallel_size": 1,
         "dtype": "bfloat16",
         "trust_remote_code": true,
-        "enforce_eager": true
+        "enforce_eager": false
       }
     },
     {
@@ -33,7 +33,7 @@
         "tensor_parallel_size": 1,
         "dtype": "bfloat16",
         "trust_remote_code": false,
-        "enforce_eager": true
+        "enforce_eager": false
       }
     },
     {
@@ -48,7 +48,7 @@
         "tensor_parallel_size": 1,
         "dtype": "bfloat16",
         "trust_remote_code": true,
-        "enforce_eager": true
+        "enforce_eager": false
       }
     },
     {
@@ -63,7 +63,7 @@
         "tensor_parallel_size": 1,
         "dtype": "bfloat16",
         "trust_remote_code": false,
-        "enforce_eager": true
+        "enforce_eager": false
       }
     },
     {
@@ -78,16 +78,16 @@
         "tensor_parallel_size": 1,
         "dtype": "bfloat16",
         "trust_remote_code": false,
-        "enforce_eager": true
+        "enforce_eager": false
       }
     }
   ],
   "model_base_urls": {
-    "deepseek-ai/DeepSeek-R1-Distill-Qwen-32B": "http://172.16.139.209:8001/v1",
-    "mistralai/Mistral-Small-24B-Instruct-2501": "http://172.16.139.209:8002/v1",
-    "Qwen/Qwen2.5-Coder-14B-Instruct": "http://172.16.139.209:8003/v1",
-    "meta-llama/Llama-3.1-8B-Instruct": "http://172.16.139.209:8004/v1",
-    "meta-llama/Llama-3.2-3B-Instruct": "http://172.16.139.209:8005/v1"
+    "deepseek-ai/DeepSeek-R1-Distill-Qwen-32B": "http://127.0.0.1:8001/v1",
+    "mistralai/Mistral-Small-24B-Instruct-2501": "http://127.0.0.1:8002/v1",
+    "Qwen/Qwen2.5-Coder-14B-Instruct": "http://127.0.0.1:8003/v1",
+    "meta-llama/Llama-3.1-8B-Instruct": "http://127.0.0.1:8004/v1",
+    "meta-llama/Llama-3.2-3B-Instruct": "http://127.0.0.1:8005/v1"
   },
   "key": "dummy-key-for-vllm"
 }

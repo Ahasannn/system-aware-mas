@@ -69,12 +69,11 @@ def _get_test_config() -> Dict[str, Any]:
 
     If `MODEL_BASE_URLS` is not set, we look for:
     - `<repo>/config_test.json`
-    - `<repo>/logs/vllm/model_base_urls.json` (written by `scripts/vllm/serve_pool.sh`)
+    - `<repo>/MAR/LLM/llm_profile_full.json`
     """
     candidates = [
         _project_root() / "config_test.json",
         _project_root() / "MAR" / "LLM" / "llm_profile_full.json",
-        _project_root() / "logs" / "vllm" / "model_base_urls.json",
     ]
 
     for path in candidates:

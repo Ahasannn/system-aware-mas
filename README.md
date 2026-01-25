@@ -64,8 +64,7 @@ If you want to run a small open-source model pool locally (e.g., multiple vLLM O
 
 For convenience, MasRouter will automatically look for a per-model base URL mapping at:
 - `config_test.json` (recommended); or
-- `MAR/LLM/llm_profile_full.json` (contains model profiles and URLs); or
-- `logs/vllm/model_base_urls.json` (legacy, written by `scripts/vllm/serve_pool.sh`).
+- `MAR/LLM/llm_profile_full.json` (contains model profiles and URLs).
 
 So you typically do **not** need to manually `export MODEL_BASE_URLS=...` for local testing.
 

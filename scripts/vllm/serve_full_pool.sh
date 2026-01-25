@@ -56,6 +56,7 @@ VLLM_PYTHON="${VLLM_PYTHON:-}"
 if [[ -z "${VLLM_PYTHON}" ]]; then
   if [[ -x "${ROOT_DIR}/.venv/bin/python" ]]; then
     VLLM_PYTHON="${ROOT_DIR}/.venv/bin/python"
+    export PATH="${ROOT_DIR}/.venv/bin:${PATH}"
   else
     # Prevent crash if python isn't immediately found (allows explicit check later)
     VLLM_PYTHON="$(command -v python || true)"
@@ -67,8 +68,8 @@ if [[ -z "${VLLM_PYTHON}" ]]; then
   exit 1
 fi
 
-if ! "${VLLM_PYTHON}" -c "import vllm, triton, setuptools" >/dev/null 2>&1; then
-  echo "[vLLM] Missing runtime deps in ${VLLM_PYTHON}."
+if ! "${VLLM_PYTHON}" -c "import vllm" >/dev/null 2>&1; then
+  echo "[vLLM] Missing vllm in ${VLLM_PYTHON}."
   echo "       Run: uv sync --frozen --extra serve"
   exit 1
 fi
@@ -258,24 +259,10 @@ for (( i=0; i<MODEL_COUNT; i++ )); do
   echo ""
 done
 
-# Copy model_base_urls from JSON for client reference
-MODEL_BASE_URLS_FILE="${MODEL_BASE_URLS_FILE:-${LOG_DIR}/model_base_urls.json}"
-"${VLLM_PYTHON}" - <<PY
-import json
-from pathlib import Path
-
-data = json.loads(Path("${LLM_PROFILE_JSON}").read_text(encoding="utf-8"))
-urls = data.get("model_base_urls", {})
-Path("${MODEL_BASE_URLS_FILE}").write_text(json.dumps(urls, indent=2) + "\n", encoding="utf-8")
-PY
-
 echo ""
 echo "[MasRouter] All ${MODEL_COUNT} models are now serving!"
 echo ""
-echo "[MasRouter] Point the client at the per-model endpoints:"
-echo "  export MODEL_BASE_URLS=\"${MODEL_BASE_URLS_FILE}\""
-echo "  # Or use the profile directly:"
-echo "  export LLM_PROFILE_JSON=\"${LLM_PROFILE_JSON}\""
+echo "[MasRouter] Model URLs are read from: ${LLM_PROFILE_JSON}"
 if [[ -n "${VLLM_API_KEY}" ]]; then
   echo "  export KEY=\"${VLLM_API_KEY}\""
 else
