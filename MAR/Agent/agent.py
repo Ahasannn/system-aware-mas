@@ -4,7 +4,7 @@ import os
 from loguru import logger
 
 from MAR.Agent.agent_registry import AgentRegistry
-from MAR.LLM.llm_profile_test import get_model_max_context_len, get_model_max_output_tokens
+from MAR.LLM.llm_profile_full import get_model_max_context_len, get_model_max_output_tokens
 from MAR.LLM.llm_registry import LLMRegistry
 from MAR.LLM.price import cal_token, truncate_text_for_model
 from MAR.Roles.role_registry import RoleRegistry

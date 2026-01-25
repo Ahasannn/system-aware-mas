@@ -76,7 +76,7 @@ def parse_args():
     parser.add_argument('--start_epoch', type=int, default=0)
     parser.add_argument('--cost_rate', type=float, default=200.0)
     parser.add_argument('--max_agent', type=int, default=6)
-    parser.add_argument("--request-timeout", type=float, default=120.0, help="Per-request timeout in seconds.")
+    parser.add_argument("--request-timeout", type=float, default=600.0, help="Per-request timeout in seconds.")
     parser.add_argument("--arrival-rate", type=float, default=0.0, help="Arrival rate (req/sec) for test shooting. 0 = disabled.")
     parser.add_argument("--arrival-pattern", type=str, default="poisson", help="Arrival pattern (poisson/microburst/sustained).")
     parser.add_argument("--concurrency", type=int, default=1, help="Max concurrent in-flight requests in test shooting.")

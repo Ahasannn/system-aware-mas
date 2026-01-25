@@ -24,7 +24,6 @@ def _get_test_config() -> Dict[str, object]:
     candidates = [
         _project_root() / "config_test.json",
         _project_root() / "MAR" / "LLM" / "llm_profile_full.json",
-        _project_root() / "logs" / "vllm" / "model_base_urls.json",
     ]
 
     for path in candidates:
@@ -116,7 +115,7 @@ class SystemRouterEnv:
         prompt_file: Optional[str] = None,
         metrics_interval: float = 1.0,
         metrics_url_map: Optional[Dict[str, str]] = None,
-        request_timeout: float = 120.0,
+        request_timeout: float = 600.0,
         quality_fn: Optional[Callable[[str, Optional[List[str]], Optional[Any]], Tuple[Union[float, torch.Tensor], Dict[str, object]]]] = None,
     ) -> None:
         self.router = router

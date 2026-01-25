@@ -16,7 +16,7 @@ import torch.nn.functional as F
 import glob
 
 from MAR.MasRouter.mas_router import MasRouter
-from MAR.LLM.llm_profile_test import llm_profile
+from MAR.LLM.llm_profile_full import llm_profile
 from MAR.Agent.reasoning_profile import reasoning_profile
 from MAR.Prompts.tasks_profile import tasks_profile
 from MAR.Tools.coding.python_executor import PyExecutor
@@ -84,8 +84,8 @@ def parse_args():
     parser.add_argument('--prompt_file', type=str, default='MAR/Roles/FinalNode/mbpp.json')
     parser.add_argument('--start_epoch', type=int, default=0)
     parser.add_argument('--cost_rate', type=float, default=400.0)
-    parser.add_argument('--max_agent', type=int, default=6)
-    parser.add_argument("--request-timeout", type=float, default=120.0, help="Per-request timeout in seconds.")
+    parser.add_argument('--max_agent', type=int, default=5)
+    parser.add_argument("--request-timeout", type=float, default=600.0, help="Per-request timeout in seconds.")
     parser.add_argument("--arrival-rate", type=float, nargs='+', default=[0.0], help="Arrival rate(s) (req/sec) for test shooting. Provide multiple values to sweep.")
     parser.add_argument("--arrival-pattern", type=str, default="poisson", help="Arrival pattern for test shooting.")
     parser.add_argument("--concurrency", type=int, default=1, help="Max concurrent in-flight requests in test shooting.")

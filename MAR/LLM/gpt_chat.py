@@ -69,12 +69,11 @@ def _get_test_config() -> Dict[str, Any]:
 
     If `MODEL_BASE_URLS` is not set, we look for:
     - `<repo>/config_test.json`
-    - `<repo>/logs/vllm/model_base_urls.json` (written by `scripts/vllm/serve_pool.sh`)
+    - `<repo>/MAR/LLM/llm_profile_full.json`
     """
     candidates = [
         _project_root() / "config_test.json",
         _project_root() / "MAR" / "LLM" / "llm_profile_full.json",
-        _project_root() / "logs" / "vllm" / "model_base_urls.json",
     ]
 
     for path in candidates:
@@ -157,6 +156,7 @@ def _get_model_base_urls() -> Dict[str, str]:
       MODEL_BASE_URLS='{"mistralai/Mistral-7B-Instruct-v0.3":"http://localhost:8003/v1"}'
     """
     raw = os.environ.get("MODEL_BASE_URLS", "").strip()
+
     if raw:
         if raw.startswith("{"):
             try:
@@ -173,7 +173,10 @@ def _get_model_base_urls() -> Dict[str, str]:
                 return {}
         return _extract_model_base_urls(data)
 
-    return _extract_model_base_urls(_get_test_config())
+    test_config = _get_test_config()
+    extracted = _extract_model_base_urls(test_config)
+
+    return extracted
 
 def _resolve_base_url(model_name: str) -> Optional[str]:
     per_model = _get_model_base_urls()
@@ -251,9 +254,12 @@ class ALLChat(LLM):
         timeout = _normalize_request_timeout(request_timeout)
         base_client = None
         try:
+            resolved_base_url = _resolve_base_url(self.model_name)
+            resolved_api_key = _resolve_api_key()
+            print(f"[DEBUG] Calling LLM sync gen() - Model: {self.model_name}, URL: {resolved_base_url}, Key: {'SET' if resolved_api_key else 'NOT SET'}, Timeout: {timeout}s")
             base_client = _get_shared_sync_client(
-                base_url=_resolve_base_url(self.model_name),
-                api_key=_resolve_api_key(),
+                base_url=resolved_base_url,
+                api_key=resolved_api_key,
             )
             client = base_client.with_options(timeout=timeout)
             chat_completion = client.chat.completions.create(
@@ -264,6 +270,11 @@ class ALLChat(LLM):
                 n=num_comps,
             )
         except Exception as exc:
+            print(f"[DEBUG] Exception in LLM call for model: {self.model_name}")
+            print(f"[DEBUG] Base URL: {_resolve_base_url(self.model_name) if hasattr(self, 'model_name') else 'N/A'}")
+            print(f"[DEBUG] API Key set: {'Yes' if _resolve_api_key() else 'No'}")
+            print(f"[DEBUG] Exception type: {type(exc).__name__}")
+            print(f"[DEBUG] Exception message: {str(exc)}")
             if _is_timeout_error(exc):
                 raise TimeoutError("LLM request timed out") from exc
             raise
@@ -290,13 +301,16 @@ class ALLChat(LLM):
 
         if isinstance(messages, str):
             messages = [{'role':"user", 'content':messages}]
-        
+
         timeout = _normalize_request_timeout(request_timeout)
+        resolved_base_url = _resolve_base_url(self.model_name)
+        resolved_api_key = _resolve_api_key()
+        print(f"[DEBUG] Calling LLM async agen() - Model: {self.model_name}, URL: {resolved_base_url}, Key: {'SET' if resolved_api_key else 'NOT SET'}, Timeout: {timeout}s")
         client = None
         try:
             client = AsyncOpenAI(
-                base_url=_resolve_base_url(self.model_name),
-                api_key=_resolve_api_key(),
+                base_url=resolved_base_url,
+                api_key=resolved_api_key,
                 timeout=timeout,
             )
             chat_completion = await client.chat.completions.create(
@@ -306,6 +320,11 @@ class ALLChat(LLM):
                 temperature=temperature,
             )
         except Exception as exc:
+            print(f"[DEBUG] Exception in LLM call for model: {self.model_name}")
+            print(f"[DEBUG] Base URL: {_resolve_base_url(self.model_name) if hasattr(self, 'model_name') else 'N/A'}")
+            print(f"[DEBUG] API Key set: {'Yes' if _resolve_api_key() else 'No'}")
+            print(f"[DEBUG] Exception type: {type(exc).__name__}")
+            print(f"[DEBUG] Exception message: {str(exc)}")
             if _is_timeout_error(exc):
                 raise TimeoutError("LLM request timed out") from exc
             raise
@@ -363,6 +382,11 @@ class DSChat(LLM):
                 n=num_comps,
             )
         except Exception as exc:
+            print(f"[DEBUG] Exception in LLM call for model: {self.model_name}")
+            print(f"[DEBUG] Base URL: {_resolve_base_url(self.model_name) if hasattr(self, 'model_name') else 'N/A'}")
+            print(f"[DEBUG] API Key set: {'Yes' if _resolve_api_key() else 'No'}")
+            print(f"[DEBUG] Exception type: {type(exc).__name__}")
+            print(f"[DEBUG] Exception message: {str(exc)}")
             if _is_timeout_error(exc):
                 raise TimeoutError("LLM request timed out") from exc
             raise
@@ -405,6 +429,11 @@ class DSChat(LLM):
                 temperature=temperature,
             )
         except Exception as exc:
+            print(f"[DEBUG] Exception in LLM call for model: {self.model_name}")
+            print(f"[DEBUG] Base URL: {_resolve_base_url(self.model_name) if hasattr(self, 'model_name') else 'N/A'}")
+            print(f"[DEBUG] API Key set: {'Yes' if _resolve_api_key() else 'No'}")
+            print(f"[DEBUG] Exception type: {type(exc).__name__}")
+            print(f"[DEBUG] Exception message: {str(exc)}")
             if _is_timeout_error(exc):
                 raise TimeoutError("LLM request timed out") from exc
             raise

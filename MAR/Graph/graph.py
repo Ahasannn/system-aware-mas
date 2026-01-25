@@ -7,6 +7,7 @@ import numpy as np
 import torch
 import asyncio
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from loguru import logger
 
 from MAR.Graph.node import Node
 from MAR.Utils.telemetry import GraphTrace, NodeTiming, utc_now_iso, LLMUsageTracker
@@ -330,6 +331,9 @@ class Graph(ABC):
                         }
 
                     def run_node(node_id: str) -> None:
+                        node = self.nodes[node_id]
+                        role_name = _safe_role_name(node)
+                        llm_name = _safe_llm_name(node)
                         ts_start = utc_now_iso()
                         start_perf = time.perf_counter()
                         usage_key = f"{self.id}:{round}:{node_id}"
@@ -353,10 +357,16 @@ class Graph(ABC):
                                     break
                                 except Exception as e:
                                     error_msg = str(e)
+                                    print(f"[DEBUG] Graph {self.id}, Node {node_id}, Attempt {tries}/{max_tries} failed")
+                                    print(f"[DEBUG] Exception type: {type(e).__name__}")
+                                    print(f"[DEBUG] Exception message: {error_msg}")
                                     if isinstance(e, TimeoutError):
                                         timed_out = True
                                         break
-                                    print(f"Error during execution of node {node_id}: {e}")
+                                    if tries >= max_tries:
+                                        logger.error(f"Graph {self.id}: Node {node_id} failed after {max_tries} attempts: {error_msg}")
+                                    else:
+                                        print(f"[DEBUG] Retrying node {node_id} (attempt {tries + 1}/{max_tries})...")
                         finally:
                             usage = usage_tracker.consume(usage_key)
                             usage_tracker.reset_context(context_token)

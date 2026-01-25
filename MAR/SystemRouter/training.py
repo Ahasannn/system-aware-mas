@@ -164,7 +164,7 @@ def _build_arg_parser(default_dataset: str) -> argparse.ArgumentParser:
     parser.add_argument("--limit", type=int, default=50, help="Number of items to train on.")
     parser.add_argument("--epochs", type=int, default=3, help="Training epochs over the slice.")
     parser.add_argument("--max-tokens", type=int, default=256, help="Max generation tokens when calling LLMs.")
-    parser.add_argument("--request-timeout", type=float, default=120.0, help="Per-request timeout in seconds.")
+    parser.add_argument("--request-timeout", type=float, default=600.0, help="Per-request timeout in seconds.")
     parser.add_argument("--deterministic", action="store_true", help="Use argmax actions instead of sampling.")
     parser.add_argument("--seed", type=int, default=42, help="Random seed.")
     parser.add_argument("--log-episodes", type=int, default=1, help="Episodes to log per epoch.")

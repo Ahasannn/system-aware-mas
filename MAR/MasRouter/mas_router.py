@@ -227,6 +227,7 @@ class MasRouter(nn.Module):
             )
 
         def run_entry(entry: Dict[str, object]):
+            idx = entry["index"]
             query = entry["query"]
             task = entry["task"]
             collab = entry["collab"]

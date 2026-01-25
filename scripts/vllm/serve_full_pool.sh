@@ -5,8 +5,37 @@ set -euo pipefail
 # Serves all models defined in llm_profile_full.json using vLLM
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+
+# ==============================================================================
+# STORAGE CONFIGURATION
+# ==============================================================================
+# 1. HUGE FILES (Model Weights) -> BIG STORAGE
+# We keep this in /blue because these files are 100GB+ and will fill your home dir instantly.
+STORAGE_ROOT="/blue/qi855292.ucf/ji757406.ucf"
+export HF_HOME="${STORAGE_ROOT}/huggingface_cache"
+mkdir -p "${HF_HOME}"
+
+# 2. LOGS -> LOCAL PROJECT FOLDER
+# We put this back in your project folder as requested.
 LOG_DIR="${ROOT_DIR}/logs/vllm"
 mkdir -p "${LOG_DIR}"
+
+echo "[Setup] HF Cache (Weights): ${HF_HOME}"
+echo "[Setup] Logs (Text):        ${LOG_DIR}"
+# ==============================================================================
+
+# ==============================================================================
+# CUDA CONFIGURATION (HPC Cluster)
+# ==============================================================================
+# Load CUDA module if not already loaded (required on HPC clusters)
+if ! command -v nvcc &> /dev/null; then
+  echo "[Setup] Loading CUDA module..."
+  module load cuda/12.8.1
+  echo "[Setup] CUDA loaded: $(nvcc --version | head -1)"
+else
+  echo "[Setup] CUDA already available: $(nvcc --version | head -1)"
+fi
+# ==============================================================================
 
 # LLM Profile JSON - the single source of truth for model configurations
 LLM_PROFILE_JSON="${LLM_PROFILE_JSON:-${ROOT_DIR}/MAR/LLM/llm_profile_full.json}"
@@ -27,13 +56,20 @@ VLLM_PYTHON="${VLLM_PYTHON:-}"
 if [[ -z "${VLLM_PYTHON}" ]]; then
   if [[ -x "${ROOT_DIR}/.venv/bin/python" ]]; then
     VLLM_PYTHON="${ROOT_DIR}/.venv/bin/python"
+    export PATH="${ROOT_DIR}/.venv/bin:${PATH}"
   else
-    VLLM_PYTHON="$(command -v python)"
+    # Prevent crash if python isn't immediately found (allows explicit check later)
+    VLLM_PYTHON="$(command -v python || true)"
   fi
 fi
 
-if ! "${VLLM_PYTHON}" -c "import vllm, triton, setuptools" >/dev/null 2>&1; then
-  echo "[vLLM] Missing runtime deps in ${VLLM_PYTHON}."
+if [[ -z "${VLLM_PYTHON}" ]]; then
+  echo "Error: Python not found! Please activate your venv or 'module load python'."
+  exit 1
+fi
+
+if ! "${VLLM_PYTHON}" -c "import vllm" >/dev/null 2>&1; then
+  echo "[vLLM] Missing vllm in ${VLLM_PYTHON}."
   echo "       Run: uv sync --frozen --extra serve"
   exit 1
 fi
@@ -165,6 +201,7 @@ start_server_from_json() {
   echo "  Memory Utilization: ${gpu_memory_utilization}"
   echo "  Max Model Len: ${max_model_len}"
   echo "  Tensor Parallel Size: ${tensor_parallel_size}"
+  echo "  Log File: ${logfile}"
 
   # Build command flags
   local extra_flags=()
@@ -181,6 +218,7 @@ start_server_from_json() {
     extra_flags+=(--enforce-eager)
   fi
 
+  # Note: HF_HOME environment variable handles the model weight location automatically here
   CUDA_VISIBLE_DEVICES="${gpu_device}" nohup "${VLLM_ENTRYPOINT[@]}" \
     --host "${VLLM_HOST}" \
     --port "${port}" \
@@ -221,24 +259,10 @@ for (( i=0; i<MODEL_COUNT; i++ )); do
   echo ""
 done
 
-# Copy model_base_urls from JSON for client reference
-MODEL_BASE_URLS_FILE="${MODEL_BASE_URLS_FILE:-${LOG_DIR}/model_base_urls.json}"
-"${VLLM_PYTHON}" - <<PY
-import json
-from pathlib import Path
-
-data = json.loads(Path("${LLM_PROFILE_JSON}").read_text(encoding="utf-8"))
-urls = data.get("model_base_urls", {})
-Path("${MODEL_BASE_URLS_FILE}").write_text(json.dumps(urls, indent=2) + "\n", encoding="utf-8")
-PY
-
 echo ""
 echo "[MasRouter] All ${MODEL_COUNT} models are now serving!"
 echo ""
-echo "[MasRouter] Point the client at the per-model endpoints:"
-echo "  export MODEL_BASE_URLS=\"${MODEL_BASE_URLS_FILE}\""
-echo "  # Or use the profile directly:"
-echo "  export LLM_PROFILE_JSON=\"${LLM_PROFILE_JSON}\""
+echo "[MasRouter] Model URLs are read from: ${LLM_PROFILE_JSON}"
 if [[ -n "${VLLM_API_KEY}" ]]; then
   echo "  export KEY=\"${VLLM_API_KEY}\""
 else
