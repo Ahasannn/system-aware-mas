@@ -16,7 +16,7 @@ import torch.nn.functional as F
 import glob
 
 from MAR.MasRouter.mas_router import MasRouter
-from MAR.LLM.llm_profile_full import llm_profile
+from MAR.LLM.llm_profile_full import llm_profile, model_base_urls
 from MAR.Agent.reasoning_profile import reasoning_profile
 from MAR.Prompts.tasks_profile import tasks_profile
 from MAR.Tools.coding.python_executor import PyExecutor
@@ -26,10 +26,65 @@ from MAR.Utils.log import configure_logging, ProgressTracker
 from MAR.Utils.telemetry import CsvTelemetryWriter
 from MAR.Utils.request_patterns import RequestPattern
 from MAR.Utils.request_shooter import RequestShooter
+from MAR.SystemRouter.metrics_watcher import start_metrics_watcher, model_metrics
 
 from Datasets.mbpp_dataset import MbppDataset, MbppDataLoader
 
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
+
+
+def _build_metrics_url_map_from_profile(base_urls: dict):
+    """Build metrics URL map from model_base_urls for vLLM metrics collection."""
+    urls = {}
+    for name, base_url in base_urls.items():
+        if not name or not base_url:
+            continue
+        # Convert base_url to metrics endpoint
+        base = base_url.rstrip("/")
+        if base.endswith("/v1"):
+            base = base[:-3].rstrip("/")
+        metrics_url = f"{base}/metrics"
+        urls[name] = metrics_url
+    return urls
+
+
+# CSV fields for test telemetry with LLM system metrics
+BASELINE_TEST_FIELDS = (
+    "run_id",
+    "dataset",
+    "split",
+    "batch_id",
+    "item_id",
+    "record_type",
+    "quality_is_correct",
+    "quality_feedback",
+    "quality_state_json",
+    "eval_duration_sec",
+    "utility",
+    "workflow_latency_seconds",
+    "llm_elapsed_seconds",
+    "arrival_rate",
+    "arrival_pattern",
+    # Step-level fields (for step records)
+    "step_index",
+    "round_index",
+    "wave_index",
+    "role_name",
+    "llm_name",
+    "latency_seconds",
+    # vLLM system metrics
+    "observed_ttft",
+    "observed_tpot",
+    "llm_running",
+    "llm_waiting",
+    "llm_kv_cache_usage",
+    "llm_ttft_avg",
+    "llm_itl_avg",
+    "llm_e2e_avg",
+    "llm_queue_avg",
+    "llm_inference_avg",
+)
+
 
 def load_result(result_file):
     if not result_file.exists():
@@ -93,6 +148,7 @@ def parse_args():
     parser.add_argument("--spike-intensity", type=float, default=10.0, help="Spike intensity for microburst.")
     parser.add_argument("--spike-period", type=float, default=20.0, help="Spike period for microburst.")
     parser.add_argument("--train-telemetry-csv", type=str, default="", help="CSV path for training telemetry.")
+    parser.add_argument("--test-telemetry-csv", type=str, default="", help="CSV path for test telemetry.")
     parser.add_argument("--save-checkpoint", type=str, default="", help="Path to save training checkpoint (single file, updated periodically).")
     args = parser.parse_args()
     return args
@@ -325,14 +381,22 @@ if __name__ == '__main__':
     logger.info("End training...")
     logger.info("Start testing...")
 
+    # Start metrics watcher for vLLM system metrics collection
+    metrics_url_map = _build_metrics_url_map_from_profile(model_base_urls)
+    if metrics_url_map:
+        logger.info(f"Starting metrics watcher for {len(metrics_url_map)} models: {list(metrics_url_map.keys())}")
+        start_metrics_watcher(metrics_url_map, interval=1.0)
+    else:
+        logger.warning("No metrics URL map built - metrics collection disabled")
+
     # Sweep through arrival rates
     arrival_rates = args.arrival_rate if isinstance(args.arrival_rate, list) else [args.arrival_rate]
     pattern = r'```python.*```'
 
-    # Create single CSV for all arrival rates
-    telemetry_csv = f"logs/{args.domain}_{current_time}_telemetry.csv"
+    # Create single CSV for all arrival rates with metrics fields
+    telemetry_csv = args.test_telemetry_csv or f"logs/{args.domain}_{current_time}_telemetry.csv"
     logger.info(f"Telemetry CSV: {telemetry_csv}")
-    quality_writer = CsvTelemetryWriter(telemetry_csv)
+    quality_writer = CsvTelemetryWriter(telemetry_csv, fieldnames=BASELINE_TEST_FIELDS)
 
     for arrival_rate in arrival_rates:
         logger.info(f"Testing with arrival_rate={arrival_rate}, arrival_pattern={args.arrival_pattern}")
@@ -344,7 +408,7 @@ if __name__ == '__main__':
         test_progress = ProgressTracker(
             total=len(test_dataset),
             phase=f"Test (rate={arrival_rate})",
-            log_interval=max(1, len(test_dataset) // 10),
+            log_interval=10,  # Log every 10 workflow completions
         )
 
         if use_shooter:
@@ -356,11 +420,16 @@ if __name__ == '__main__':
                 burst_duration=args.burst_duration,
                 seed=1234,
             )
+            def on_workflow_complete(result):
+                """Callback to log progress as each workflow completes."""
+                test_progress.update(success=result.success, models=None)
+
             shooter = RequestShooter(
                 pattern_gen,
                 max_concurrency=args.concurrency,
                 capture_output=True,
                 collect_results=True,
+                on_result=on_workflow_complete,
             )
 
             def handler(row):
@@ -376,7 +445,6 @@ if __name__ == '__main__':
                         reasonings,
                         task_labels,
                         prompt_file=args.prompt_file,
-                        telemetry_path=telemetry_csv,
                         item_ids=[item_id],
                         dataset=args.domain,
                         split="test",
@@ -385,13 +453,13 @@ if __name__ == '__main__':
                         request_timeout=args.request_timeout,
                     )
 
-                # --- UPDATED: Retrieve workflow latency info ---
+                # Retrieve workflow latency info and transitions with metrics
                 workflows = getattr(router, "last_compact_workflows", [])
                 # Handler processes 1 item, so we take the first workflow if available
                 wf_data = workflows[0] if workflows else {}
                 w_latency = wf_data.get("workflow_latency_seconds", 0.0)
                 l_elapsed = wf_data.get("llm_elapsed_seconds", 0.0)
-                # -----------------------------------------------
+                transitions = wf_data.get("transitions", [])
 
                 skipped_indices = getattr(router, "last_skipped_indices", set())
                 if 0 in skipped_indices:
@@ -406,6 +474,7 @@ if __name__ == '__main__':
                     # Pass metrics to result payload
                     "workflow_latency_seconds": w_latency,
                     "llm_elapsed_seconds": l_elapsed,
+                    "transitions": transitions,
                 }
 
             items = test_dataset.df.to_dict("records")
@@ -416,11 +485,9 @@ if __name__ == '__main__':
             )
             for res in sorted(results, key=lambda r: r.index):
                 if not res.success:
-                    test_progress.update(success=False, models=None)
                     continue
                 payload = res.output
                 if payload is None:
-                    test_progress.update(success=False, models=None)
                     continue
                 query = payload["query"]
                 test = payload["tests"]
@@ -428,10 +495,10 @@ if __name__ == '__main__':
                 result = payload["result"]
                 cost = payload["cost"]
 
-                # --- UPDATED: Extract metrics ---
+                # Extract metrics and transitions
                 w_latency = payload.get("workflow_latency_seconds", 0.0)
                 l_elapsed = payload.get("llm_elapsed_seconds", 0.0)
-                # --------------------------------
+                transitions = payload.get("transitions", [])
 
                 eval_start_ts = time.time()
                 match = re.search(pattern, result, re.DOTALL | re.MULTILINE)
@@ -445,29 +512,60 @@ if __name__ == '__main__':
                 total_solved = total_solved + is_solved
                 total_executed = total_executed + 1
                 utility = is_solved - cost * args.cost_rate
-                quality_writer.append_rows(
-                    [
-                        {
-                            "run_id": current_time,
-                            "dataset": args.domain,
-                            "split": "test",
-                            "batch_id": "",
-                            "item_id": str(item_id),
-                            "record_type": "quality",
-                            "quality_is_correct": bool(is_solved),
-                            "quality_feedback": feedback,
-                            "quality_state_json": list(state) if state else "",
-                            "eval_duration_sec": time.time() - eval_start_ts,
-                            "utility": utility,
-                            # --- UPDATED: Save metrics to CSV ---
-                            "workflow_latency_seconds": w_latency,
-                            "llm_elapsed_seconds": l_elapsed,
-                            "arrival_rate": arrival_rate,
-                            "arrival_pattern": args.arrival_pattern,
-                        }
-                    ]
-                )
-                test_progress.update(success=True, models=None)
+
+                # Build CSV rows: episode record + step records with metrics
+                csv_rows = []
+                # Episode-level record
+                csv_rows.append({
+                    "run_id": current_time,
+                    "dataset": args.domain,
+                    "split": "test",
+                    "batch_id": "",
+                    "item_id": str(item_id),
+                    "record_type": "episode",
+                    "quality_is_correct": bool(is_solved),
+                    "quality_feedback": feedback,
+                    "quality_state_json": list(state) if state else "",
+                    "eval_duration_sec": time.time() - eval_start_ts,
+                    "utility": utility,
+                    "workflow_latency_seconds": w_latency,
+                    "llm_elapsed_seconds": l_elapsed,
+                    "arrival_rate": arrival_rate,
+                    "arrival_pattern": args.arrival_pattern,
+                })
+                # Step-level records with vLLM system metrics
+                for step in transitions:
+                    csv_rows.append({
+                        "run_id": current_time,
+                        "dataset": args.domain,
+                        "split": "test",
+                        "batch_id": "",
+                        "item_id": str(item_id),
+                        "record_type": "step",
+                        "quality_is_correct": bool(is_solved),
+                        "workflow_latency_seconds": w_latency,
+                        "llm_elapsed_seconds": l_elapsed,
+                        "arrival_rate": arrival_rate,
+                        "arrival_pattern": args.arrival_pattern,
+                        "step_index": step.get("step_index", ""),
+                        "round_index": step.get("round_index", ""),
+                        "wave_index": step.get("wave_index", ""),
+                        "role_name": step.get("role_name", ""),
+                        "llm_name": step.get("llm_name", ""),
+                        "latency_seconds": step.get("latency_seconds", 0.0),
+                        # vLLM system metrics
+                        "observed_ttft": step.get("observed_ttft", 0.0),
+                        "observed_tpot": step.get("observed_tpot", 0.0),
+                        "llm_running": step.get("llm_running", 0),
+                        "llm_waiting": step.get("llm_waiting", 0),
+                        "llm_kv_cache_usage": step.get("llm_kv_cache_usage", 0.0),
+                        "llm_ttft_avg": step.get("llm_ttft_avg", 0.0),
+                        "llm_itl_avg": step.get("llm_itl_avg", 0.0),
+                        "llm_e2e_avg": step.get("llm_e2e_avg", 0.0),
+                        "llm_queue_avg": step.get("llm_queue_avg", 0.0),
+                        "llm_inference_avg": step.get("llm_inference_avg", 0.0),
+                    })
+                quality_writer.append_rows(csv_rows)
             test_progress.log_final_summary()
             accuracy = total_solved / total_executed if total_executed else 0.0
             logger.info("Shot {} requests. Accuracy: {}", total_executed, accuracy)
@@ -487,7 +585,6 @@ if __name__ == '__main__':
                     reasonings,
                     task_labels,
                     prompt_file=args.prompt_file,
-                    telemetry_path=telemetry_csv,
                     item_ids=item_ids,
                     dataset=args.domain,
                     split="test",
@@ -496,9 +593,8 @@ if __name__ == '__main__':
                     request_timeout=args.request_timeout,
                 )
 
-                # --- UPDATED: Retrieve batch workflows ---
+                # Retrieve batch workflows with transitions
                 compact_workflows = getattr(router, "last_compact_workflows", [])
-                # -----------------------------------------
 
                 utilities = []
                 skipped_indices = getattr(router, "last_skipped_indices", set())
@@ -509,11 +605,11 @@ if __name__ == '__main__':
                         test_progress.update(success=False, models=None)
                         continue
 
-                    # --- UPDATED: Get metrics for specific item in batch ---
+                    # Get metrics and transitions for specific item in batch
                     wf_data = compact_workflows[idx] if idx < len(compact_workflows) else {}
                     w_latency = wf_data.get("workflow_latency_seconds", 0.0)
                     l_elapsed = wf_data.get("llm_elapsed_seconds", 0.0)
-                    # -------------------------------------------------------
+                    transitions = wf_data.get("transitions", [])
 
                     eval_start_ts = time.time()
                     match = re.search(pattern, result, re.DOTALL|re.MULTILINE)
@@ -528,28 +624,60 @@ if __name__ == '__main__':
                     total_executed = total_executed + 1
                     utility = is_solved - cost * args.cost_rate
                     utilities.append(utility)
-                    quality_writer.append_rows(
-                        [
-                            {
-                                "run_id": current_time,
-                                "dataset": args.domain,
-                                "split": "test",
-                                "batch_id": i_batch,
-                                "item_id": str(item_id),
-                                "record_type": "quality",
-                                "quality_is_correct": bool(is_solved),
-                                "quality_feedback": feedback,
-                                "quality_state_json": list(state) if state else "",
-                                "eval_duration_sec": time.time() - eval_start_ts,
-                                "utility": utility,
-                                # --- UPDATED: Save metrics to CSV ---
-                                "workflow_latency_seconds": w_latency,
-                                "llm_elapsed_seconds": l_elapsed,
-                                "arrival_rate": arrival_rate,
-                                "arrival_pattern": args.arrival_pattern,
-                            }
-                        ]
-                    )
+
+                    # Build CSV rows: episode record + step records with metrics
+                    csv_rows = []
+                    # Episode-level record
+                    csv_rows.append({
+                        "run_id": current_time,
+                        "dataset": args.domain,
+                        "split": "test",
+                        "batch_id": i_batch,
+                        "item_id": str(item_id),
+                        "record_type": "episode",
+                        "quality_is_correct": bool(is_solved),
+                        "quality_feedback": feedback,
+                        "quality_state_json": list(state) if state else "",
+                        "eval_duration_sec": time.time() - eval_start_ts,
+                        "utility": utility,
+                        "workflow_latency_seconds": w_latency,
+                        "llm_elapsed_seconds": l_elapsed,
+                        "arrival_rate": arrival_rate,
+                        "arrival_pattern": args.arrival_pattern,
+                    })
+                    # Step-level records with vLLM system metrics
+                    for step in transitions:
+                        csv_rows.append({
+                            "run_id": current_time,
+                            "dataset": args.domain,
+                            "split": "test",
+                            "batch_id": i_batch,
+                            "item_id": str(item_id),
+                            "record_type": "step",
+                            "quality_is_correct": bool(is_solved),
+                            "workflow_latency_seconds": w_latency,
+                            "llm_elapsed_seconds": l_elapsed,
+                            "arrival_rate": arrival_rate,
+                            "arrival_pattern": args.arrival_pattern,
+                            "step_index": step.get("step_index", ""),
+                            "round_index": step.get("round_index", ""),
+                            "wave_index": step.get("wave_index", ""),
+                            "role_name": step.get("role_name", ""),
+                            "llm_name": step.get("llm_name", ""),
+                            "latency_seconds": step.get("latency_seconds", 0.0),
+                            # vLLM system metrics
+                            "observed_ttft": step.get("observed_ttft", 0.0),
+                            "observed_tpot": step.get("observed_tpot", 0.0),
+                            "llm_running": step.get("llm_running", 0),
+                            "llm_waiting": step.get("llm_waiting", 0),
+                            "llm_kv_cache_usage": step.get("llm_kv_cache_usage", 0.0),
+                            "llm_ttft_avg": step.get("llm_ttft_avg", 0.0),
+                            "llm_itl_avg": step.get("llm_itl_avg", 0.0),
+                            "llm_e2e_avg": step.get("llm_e2e_avg", 0.0),
+                            "llm_queue_avg": step.get("llm_queue_avg", 0.0),
+                            "llm_inference_avg": step.get("llm_inference_avg", 0.0),
+                        })
+                    quality_writer.append_rows(csv_rows)
                     test_progress.update(success=True, models=None)
 
             # Log test progress summary

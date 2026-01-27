@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 
 import torch
+from loguru import logger
 
 from MAR.SystemRouter.metrics_watcher import start_metrics_watcher
 from MAR.SystemRouter.system_aware_router import SystemAwareRouter
@@ -98,8 +99,13 @@ def _build_metrics_url_map(models: List[str]) -> Dict[str, str]:
     for model in models:
         base_url = _resolve_base_url(model)
         if not base_url:
+            logger.warning("[Metrics] No base URL for model: {}", model)
             continue
-        urls[model] = _metrics_url_from_base(base_url)
+        metrics_url = _metrics_url_from_base(base_url)
+        urls[model] = metrics_url
+        logger.debug("[Metrics] {} -> {}", model, metrics_url)
+    if not urls:
+        logger.warning("[Metrics] No metrics URLs built! Models: {}", models)
     return urls
 
 
@@ -129,7 +135,10 @@ class SystemRouterEnv:
         self.metrics_url_map = metrics_url_map or _build_metrics_url_map(router.models)
         self.metrics_thread = None
         if self.metrics_url_map:
+            logger.info("[Env] Starting metrics watcher with {} models", len(self.metrics_url_map))
             self.metrics_thread = start_metrics_watcher(self.metrics_url_map, interval=metrics_interval)
+        else:
+            logger.warning("[Env] No metrics URL map - metrics watcher NOT started. Router models: {}", router.models)
 
     def step(
         self,

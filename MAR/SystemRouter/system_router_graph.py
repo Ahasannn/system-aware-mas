@@ -160,6 +160,9 @@ class SystemRouterGraph(Graph):
             usage_tracker.clear(usage_key)
             model_name = transition.get("model", "")
             snap = model_metrics.get(model_name, {})
+            if not snap:
+                from loguru import logger
+                logger.trace("[Graph] No metrics found for model '{}'. Available: {}", model_name, list(model_metrics.keys()))
             with transitions_lock:
                 transition["llm_running"] = snap.get("num_requests_running", 0)
                 transition["llm_waiting"] = snap.get("num_requests_waiting", 0)
@@ -167,6 +170,8 @@ class SystemRouterGraph(Graph):
                 transition["llm_ttft_avg"] = snap.get("ttft_avg", 0.0)
                 transition["llm_itl_avg"] = snap.get("itl_avg", 0.0)
                 transition["llm_e2e_avg"] = snap.get("e2e_avg", 0.0)
+                transition["llm_queue_avg"] = snap.get("queue_avg", 0.0)
+                transition["llm_inference_avg"] = snap.get("inference_avg", 0.0)
             tries = 0
             success = False
             error_msg = ""

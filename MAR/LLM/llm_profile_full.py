@@ -13,6 +13,9 @@ if _PROFILE_PATH.is_file():
 
 llm_profile: List[Dict[str, str]] = _PROFILE_DATA.get("models", [])
 
+# Model base URLs for vLLM endpoints (used by metrics watcher)
+model_base_urls: Dict[str, str] = _PROFILE_DATA.get("model_base_urls", {})
+
 DEFAULT_MAX_MODEL_LEN: int = _PROFILE_DATA.get("global_settings", {}).get("default_max_model_len", 16384)
 _MAX_MODEL_LEN_MAP = {
     entry.get("Name"): entry.get("MaxModelLen", DEFAULT_MAX_MODEL_LEN)

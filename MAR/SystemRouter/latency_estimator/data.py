@@ -19,6 +19,8 @@ DEFAULT_NUM_FEATURES = (
     "kv_cache_usage",
     "avg_tpot",
     "avg_ttft",
+    "avg_queue",
+    "avg_inference",
 )
 
 
@@ -30,6 +32,8 @@ class LatencyEstimatorRecord:
     kv_cache_usage: float
     avg_tpot: float
     avg_ttft: float
+    avg_queue: float
+    avg_inference: float
     model_name: str
     role_name: str
     strategy_name: str
@@ -85,6 +89,8 @@ class LatencyEstimatorDataset(Dataset):
                     record.kv_cache_usage,
                     record.avg_tpot,
                     record.avg_ttft,
+                    record.avg_queue,
+                    record.avg_inference,
                 ]
                 for record in self.records
             ],
@@ -132,6 +138,8 @@ def load_latency_records_from_csv(
     kv_field: str = "llm_kv_cache_usage",
     avg_tpot_field: str = "llm_itl_avg",
     avg_ttft_field: str = "llm_ttft_avg",
+    avg_queue_field: str = "llm_queue_avg",
+    avg_inference_field: str = "llm_inference_avg",
     ttft_field: str = "observed_ttft",
     tpot_field: str = "observed_tpot",
     model_field: str = "model_name",
@@ -182,6 +190,8 @@ def load_latency_records_from_csv(
             kv_cache_usage = _safe_float(row.get(kv_field)) or 0.0
             avg_tpot = _safe_float(row.get(avg_tpot_field)) or 0.0
             avg_ttft = _safe_float(row.get(avg_ttft_field)) or 0.0
+            avg_queue = _safe_float(row.get(avg_queue_field)) or 0.0
+            avg_inference = _safe_float(row.get(avg_inference_field)) or 0.0
 
             ttft = _safe_float(row.get(ttft_field)) or _safe_float(row.get("ttft"))
             tpot = _safe_float(row.get(tpot_field)) or _safe_float(row.get("tpot"))
@@ -198,6 +208,8 @@ def load_latency_records_from_csv(
                     kv_cache_usage=float(kv_cache_usage),
                     avg_tpot=float(avg_tpot),
                     avg_ttft=float(avg_ttft),
+                    avg_queue=float(avg_queue),
+                    avg_inference=float(avg_inference),
                     model_name=model_name,
                     role_name=role_name,
                     strategy_name=strategy_name,

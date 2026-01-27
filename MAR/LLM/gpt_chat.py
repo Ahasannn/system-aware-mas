@@ -256,7 +256,6 @@ class ALLChat(LLM):
         try:
             resolved_base_url = _resolve_base_url(self.model_name)
             resolved_api_key = _resolve_api_key()
-            print(f"[DEBUG] Calling LLM sync gen() - Model: {self.model_name}, URL: {resolved_base_url}, Key: {'SET' if resolved_api_key else 'NOT SET'}, Timeout: {timeout}s")
             base_client = _get_shared_sync_client(
                 base_url=resolved_base_url,
                 api_key=resolved_api_key,

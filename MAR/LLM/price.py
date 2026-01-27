@@ -121,5 +121,26 @@ MODEL_PRICE = {
     "Qwen/Qwen2.5-3B-Instruct": {
         "input": 0.02,
         "output": 0.05,
-    }
+    },
+    # Model pool (vLLM local serving)
+    "deepseek-ai/DeepSeek-R1-Distill-Qwen-32B": {
+        "input": 0.29,
+        "output": 0.29,
+    },
+    "mistralai/Mistral-Small-24B-Instruct-2501": {
+        "input": 0.03,
+        "output": 0.11,
+    },
+    "Qwen/Qwen2.5-Coder-14B-Instruct": {
+        "input": 0.20,
+        "output": 0.20,
+    },
+    "meta-llama/Llama-3.1-8B-Instruct": {
+        "input": 0.02,
+        "output": 0.05,
+    },
+    "meta-llama/Llama-3.2-3B-Instruct": {
+        "input": 0.02,
+        "output": 0.02,
+    },
 }

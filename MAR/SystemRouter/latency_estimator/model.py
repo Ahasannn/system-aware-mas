@@ -10,7 +10,7 @@ import torch.nn.functional as F
 
 @dataclass(frozen=True)
 class LatencyEstimatorConfig:
-    num_numerical_features: int = 6
+    num_numerical_features: int = 8
     embedding_dim: int = 16
     hidden_dims: List[int] = None
     dropout: float = 0.1
@@ -30,7 +30,7 @@ class LatencyEstimatorConfig:
     @classmethod
     def from_dict(cls, data: Dict[str, object]) -> "LatencyEstimatorConfig":
         return cls(
-            num_numerical_features=int(data.get("num_numerical_features", 6)),
+            num_numerical_features=int(data.get("num_numerical_features", 8)),
             embedding_dim=int(data.get("embedding_dim", 16)),
             hidden_dims=list(data.get("hidden_dims", [128, 64])),
             dropout=float(data.get("dropout", 0.1)),
@@ -45,7 +45,7 @@ class LatencyEstimator(nn.Module):
     def __init__(
         self,
         *,
-        num_numerical_features: int = 6,
+        num_numerical_features: int = 8,
         num_strategies: int = 3,
         num_roles: int = 10,
         num_models: int = 5,

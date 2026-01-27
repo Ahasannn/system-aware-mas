@@ -13,6 +13,7 @@ from MAR.Graph.node import Node
 from MAR.Utils.telemetry import GraphTrace, NodeTiming, utc_now_iso, LLMUsageTracker
 from MAR.Utils.utils import find_mode
 from MAR.Agent.agent_registry import AgentRegistry
+from MAR.SystemRouter.metrics_watcher import model_metrics
 
 class Graph(ABC):
     """
@@ -340,6 +341,22 @@ class Graph(ABC):
                         context_token = usage_tracker.set_context(usage_key)
                         usage_tracker.clear(usage_key)
                         usage = {"cost": 0.0, "prompt_tokens": 0.0, "completion_tokens": 0.0}
+
+                        # Capture vLLM metrics snapshot before execution
+                        pre_llm_name = _safe_llm_name(node)
+                        snap = model_metrics.get(pre_llm_name, {})
+                        with transitions_lock:
+                            transition = transitions.get((round, node_id))
+                            if transition is not None:
+                                transition["llm_running"] = snap.get("num_requests_running", 0)
+                                transition["llm_waiting"] = snap.get("num_requests_waiting", 0)
+                                transition["llm_kv_cache_usage"] = snap.get("kv_cache_usage_perc", 0.0)
+                                transition["llm_ttft_avg"] = snap.get("ttft_avg", 0.0)
+                                transition["llm_itl_avg"] = snap.get("itl_avg", 0.0)
+                                transition["llm_e2e_avg"] = snap.get("e2e_avg", 0.0)
+                                transition["llm_queue_avg"] = snap.get("queue_avg", 0.0)
+                                transition["llm_inference_avg"] = snap.get("inference_avg", 0.0)
+
                         tries = 0
                         success = False
                         error_msg = ""
@@ -373,11 +390,16 @@ class Graph(ABC):
                         ts_end = utc_now_iso()
                         duration_sec = time.perf_counter() - start_perf
                         node = self.nodes[node_id]
+                        # Capture observed metrics after execution
+                        observed_ttft = float(getattr(node, "last_ttft", 0.0))
+                        observed_tpot = float(getattr(node, "last_tpot", 0.0))
                         with transitions_lock:
                             transition = transitions.get((round, node_id))
                             if transition is not None:
                                 transition["llm_name"] = _safe_llm_name(node)
                                 transition["latency_seconds"] = duration_sec
+                                transition["observed_ttft"] = observed_ttft
+                                transition["observed_tpot"] = observed_tpot
                         if trace is not None:
                             output_text = ""
                             trace.record_node_event(

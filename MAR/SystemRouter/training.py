@@ -61,6 +61,8 @@ SYSTEM_ROUTER_CSV_FIELDS: Sequence[str] = (
     "llm_ttft_avg",
     "llm_itl_avg",
     "llm_e2e_avg",
+    "llm_queue_avg",
+    "llm_inference_avg",
     "prompt_base",
     "response_final",
 )
@@ -286,6 +288,10 @@ def main(default_dataset: str = "mbpp") -> None:
 
                 if _episode_has_agent_errors(episode):
                     # Track failed episode
+                    for step in episode.get("executor_transitions", []):
+                        if not step.get("success", True) or step.get("error", "").strip():
+                            logger.warning("Episode {} agent error: role={} model={} error={}",
+                                sample_idx, step.get("role"), step.get("model"), step.get("error"))
                     progress.update(success=False, models=None)
                     return
 
@@ -365,6 +371,8 @@ def main(default_dataset: str = "mbpp") -> None:
                                 "llm_ttft_avg": step.get("llm_ttft_avg", 0.0),
                                 "llm_itl_avg": step.get("llm_itl_avg", 0.0),
                                 "llm_e2e_avg": step.get("llm_e2e_avg", 0.0),
+                                "llm_queue_avg": step.get("llm_queue_avg", 0.0),
+                                "llm_inference_avg": step.get("llm_inference_avg", 0.0),
                                 "prompt_base": step.get("prompt_base", ""),
                                 "response_final": step.get("response", ""),
                                 "prompt_tokens": token_counts.get("prompt_tokens", 0),
@@ -449,6 +457,7 @@ def main(default_dataset: str = "mbpp") -> None:
                             sample=sample,
                         )
                     except Exception as exc:
+                        logger.warning("Episode {} failed: {}", sample_idx, exc)
                         progress.update(success=False, models=None)
                         continue
                     process_episode(sample_idx, sample, episode)

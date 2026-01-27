@@ -14,3 +14,4 @@ register/
 *.pptx
 *.zip
 settings.json
+*.claudecore.*

@@ -11,6 +11,19 @@ from sentence_transformers import SentenceTransformer
 from MAR.SystemRouter.metrics_watcher import model_metrics
 from MAR.Utils.offline_embeddings import load_query_embeddings, load_role_embeddings
 
+
+def _load_models_from_profile() -> List[str]:
+    """Load model names from llm_profile_full.json."""
+    profile_path = Path(__file__).resolve().parents[1] / "LLM" / "llm_profile_full.json"
+    if not profile_path.is_file():
+        return []
+    try:
+        with profile_path.open("r", encoding="utf-8") as f:
+            data = json.load(f)
+        return [m["Name"] for m in data.get("models", []) if isinstance(m, dict) and "Name" in m]
+    except (OSError, json.JSONDecodeError):
+        return []
+
 class SemanticEncoder(nn.Module):
     """
     384-d semantic encoder backed by `sentence-transformers/all-MiniLM-L6-v2`.
@@ -57,11 +70,13 @@ class SystemAwareRouter(nn.Module):
         super().__init__()
         self.device = device if device is not None else torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-        # Defaults align with the local vLLM test pool (see `config_test.json` / `MAR/LLM/llm_profile_full.json`).
-        self.models = models or [
-            "Qwen/Qwen2.5-3B-Instruct",
+        # Defaults align with the local vLLM test pool (see `MAR/LLM/llm_profile_full.json`).
+        self.models = models or _load_models_from_profile() or [
+            "deepseek-ai/DeepSeek-R1-Distill-Qwen-32B",
+            "mistralai/Mistral-Small-24B-Instruct-2501",
+            "Qwen/Qwen2.5-Coder-14B-Instruct",
+            "meta-llama/Llama-3.1-8B-Instruct",
             "meta-llama/Llama-3.2-3B-Instruct",
-            "mistralai/Mistral-7B-Instruct-v0.3",
         ]
         self.strategies = strategies or ["Flash", "Concise", "DeepThink"]
         self.topologies = topologies or [item["Name"] for item in _load_reasoning_profile()]

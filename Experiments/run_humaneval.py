@@ -22,7 +22,7 @@ from MAR.Prompts.tasks_profile import tasks_profile
 from MAR.Tools.coding.python_executor import PyExecutor
 from MAR.Utils.utils import fix_random_seed
 from MAR.Utils.globals import Cost, PromptTokens, CompletionTokens
-from MAR.Utils.log import configure_logging
+from MAR.Utils.log import configure_logging, ProgressTracker
 from MAR.Utils.telemetry import CsvTelemetryWriter
 from MAR.Utils.request_patterns import RequestPattern
 from MAR.Utils.request_shooter import RequestShooter
@@ -93,6 +93,7 @@ def parse_args():
     parser.add_argument("--spike-intensity", type=float, default=10.0, help="Spike intensity for microburst.")
     parser.add_argument("--spike-period", type=float, default=20.0, help="Spike period for microburst.")
     parser.add_argument("--train-telemetry-csv", type=str, default="", help="CSV path for training telemetry.")
+    parser.add_argument("--test-telemetry-csv", type=str, default="", help="CSV path for test telemetry.")
     parser.add_argument("--save-checkpoint", type=str, default="", help="Path to save training checkpoint (single file, updated periodically).")
     parser.add_argument("--split-ratio", type=float, default=0.2, help="Train/test split ratio (default 0.2 means 20% train, 80% test)")
     args = parser.parse_args()
@@ -162,14 +163,21 @@ if __name__ == '__main__':
     checkpoint_dir = os.path.join("checkpoints", "mas_router")
     os.makedirs(checkpoint_dir, exist_ok=True)
     for epoch in range(args.epochs):
-        logger.info(f"Epoch {epoch}",80*'-')
         total_solved, total_executed = (0, 0)
         train_loader = HumanEvalDataLoader(train_dataset, batch_size=args.batch_size, shuffle=True)
+
+        # Initialize progress tracker for training
+        num_batches = (len(train_dataset) + args.batch_size - 1) // args.batch_size
+        train_progress = ProgressTracker(
+            total=len(train_dataset),
+            phase=f"Train Epoch {epoch}",
+            log_interval=max(1, len(train_dataset) // 10),
+        )
+
         if epoch < args.start_epoch:
             router.load_state_dict(torch.load(f"humaneval_router_epoch{epoch}_new.pth", map_location=torch.device('cuda')))
             continue
         for i_batch, current_batch in enumerate(train_loader):
-            logger.info(f"Batch {i_batch}",80*'-')
             start_ts = time.time()
             queries = [item['prompt'] for item in current_batch]
             tests = [item['test'] for item in current_batch]
@@ -286,9 +294,18 @@ if __name__ == '__main__':
             optimizer.step()
             accuracy = total_solved / total_executed if total_executed else 0.0
 
-            logger.info(f"Batch time {time.time() - start_ts:.3f}")
-            logger.info(f"Accuracy: {accuracy}")
-            logger.info(f"utilities:{utilities}")
+            # Update progress tracker with model usage from workflows
+            models_used = []
+            for workflow in compact_workflows:
+                if workflow:
+                    for step in workflow.get("transitions", []):
+                        llm = step.get("llm_name", "")
+                        if llm:
+                            models_used.append(llm)
+            for _ in range(len(valid_indices)):
+                train_progress.update(success=True, models=models_used[:len(models_used)//max(1, len(valid_indices))] if models_used else None)
+            for _ in range(len(queries) - len(valid_indices)):
+                train_progress.update(success=False, models=None)
             if (i_batch + 1) % 5 == 0 and args.save_checkpoint:
                 # Periodic checkpoint update
                 ckpt_path = args.save_checkpoint
@@ -297,6 +314,9 @@ if __name__ == '__main__':
                 torch.save(router.state_dict(), tmp_path)
                 os.replace(tmp_path, ckpt_path)
                 logger.info(f"Saved checkpoint: {ckpt_path}")
+        # Log training progress summary for this epoch
+        train_progress.log_final_summary()
+
         # Save at end of each epoch
         if args.save_checkpoint:
             ckpt_path = args.save_checkpoint
@@ -313,7 +333,7 @@ if __name__ == '__main__':
     pattern = r'```python.*```'
 
     # Create single CSV for all arrival rates
-    telemetry_csv = f"logs/{args.domain}_{current_time}_telemetry.csv"
+    telemetry_csv = args.test_telemetry_csv or f"logs/{args.domain}_{current_time}_telemetry.csv"
     logger.info(f"Telemetry CSV: {telemetry_csv}")
     quality_writer = CsvTelemetryWriter(telemetry_csv)
 
@@ -322,6 +342,13 @@ if __name__ == '__main__':
         total_solved, total_executed = (0, 0)
         test_loader = HumanEvalDataLoader(test_dataset, batch_size=args.batch_size, shuffle=True)
         use_shooter = arrival_rate > 0.0 or args.concurrency > 1
+
+        # Initialize progress tracker for testing
+        test_progress = ProgressTracker(
+            total=len(test_dataset),
+            phase=f"Test (rate={arrival_rate})",
+            log_interval=10,  # Log every 10 workflow completions
+        )
 
         if use_shooter:
             pattern_gen = RequestPattern(
@@ -332,11 +359,16 @@ if __name__ == '__main__':
                 burst_duration=args.burst_duration,
                 seed=1234,
             )
+            def on_workflow_complete(result):
+                """Callback to log progress as each workflow completes."""
+                test_progress.update(success=result.success, models=None)
+
             shooter = RequestShooter(
                 pattern_gen,
                 max_concurrency=args.concurrency,
                 capture_output=True,
                 collect_results=True,
+                on_result=on_workflow_complete,
             )
 
             def handler(row):
@@ -391,11 +423,9 @@ if __name__ == '__main__':
             )
             for res in sorted(results, key=lambda r: r.index):
                 if not res.success:
-                    logger.warning("request_failed idx={} item_id={} error={}", res.index, res.item_id, res.error)
                     continue
                 payload = res.output
                 if payload is None:
-                    logger.warning("request_empty_output idx={} item_id={}", res.index, res.item_id)
                     continue
                 query = payload["query"]
                 test = payload["test"]
@@ -440,12 +470,12 @@ if __name__ == '__main__':
                         }
                     ]
                 )
+            test_progress.log_final_summary()
             accuracy = total_solved / total_executed if total_executed else 0.0
             logger.info("Shot {} requests. Accuracy: {}", total_executed, accuracy)
         else:
             for i_batch, current_batch in enumerate(test_loader):
                 start_ts = time.time()
-                logger.info(f"Batch {i_batch}",80*'-')
                 queries = [item['prompt'] for item in current_batch]
                 tests = [item['test'] for item in current_batch]
                 item_ids = [item["task_id"] for item in current_batch]
@@ -477,7 +507,7 @@ if __name__ == '__main__':
                     zip(item_ids, queries, results, tests, log_probs, costs)
                 ):
                     if idx in skipped_indices:
-                        logger.warning("request_timeout idx={} item_id={}", idx, item_id)
+                        test_progress.update(success=False, models=None)
                         continue
 
                     # Get metrics for specific item in batch
@@ -519,9 +549,9 @@ if __name__ == '__main__':
                             }
                         ]
                     )
+                    test_progress.update(success=True, models=None)
 
-                accuracy = total_solved / total_executed if total_executed else 0.0
-                logger.info(f"Batch time {time.time() - start_ts:.3f}")
-                logger.info(f"Accuracy: {accuracy}")
-                logger.info(f"utilities:{utilities}")
-        logger.info(f"End testing for arrival_rate={arrival_rate}")
+            # Log test progress summary
+            test_progress.log_final_summary()
+            accuracy = total_solved / total_executed if total_executed else 0.0
+            logger.info(f"Final accuracy for arrival_rate={arrival_rate}: {accuracy}")
