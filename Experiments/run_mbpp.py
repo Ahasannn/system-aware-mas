@@ -57,11 +57,21 @@ BASELINE_TEST_FIELDS = (
     "batch_id",
     "item_id",
     "record_type",
+    # Topology / workflow metadata
+    "task_name",
+    "reasoning_name",
+    "graph_id",
+    "num_agents",
+    "agent_roles_json",
+    "agent_llms_json",
+    "role_llm_map_json",
+    # Quality evaluation
     "quality_is_correct",
     "quality_feedback",
     "quality_state_json",
     "eval_duration_sec",
     "utility",
+    # Timing
     "workflow_latency_seconds",
     "llm_elapsed_seconds",
     "arrival_rate",
@@ -69,16 +79,14 @@ BASELINE_TEST_FIELDS = (
     # Step-level fields (for step records)
     "step_index",
     "round_index",
-    "wave_index",
+    "dep_level",
     "role_name",
     "llm_name",
     "latency_seconds",
     "node_id",
-    "wave_max_latency_seconds",
-    "wave_slack_seconds",
-    "wave_slack_pct",
-    "wave_size",
-    # vLLM system metrics
+    "spatial_predecessors",
+    "spatial_successors",
+    # vLLM system metrics (pre-request snapshot)
     "observed_ttft",
     "observed_tpot",
     "llm_running",
@@ -89,27 +97,7 @@ BASELINE_TEST_FIELDS = (
     "llm_e2e_avg",
     "llm_queue_avg",
     "llm_inference_avg",
-    "workflow_slack_seconds",
 )
-
-
-def _compute_wave_stats(transitions):
-    """Return per-(round_index, wave_index) max latency and wave size."""
-    wave_stats = {}
-    for step in transitions or []:
-        key = (step.get("round_index", ""), step.get("wave_index", ""))
-        try:
-            latency = float(step.get("latency_seconds", 0.0) or 0.0)
-        except (TypeError, ValueError):
-            latency = 0.0
-        stat = wave_stats.get(key)
-        if stat is None:
-            wave_stats[key] = {"max_latency": latency, "count": 1}
-        else:
-            if latency > stat["max_latency"]:
-                stat["max_latency"] = latency
-            stat["count"] += 1
-    return wave_stats
 
 
 def load_result(result_file):
@@ -195,10 +183,12 @@ BASELINE_TRAIN_FIELDS = (
     "quality_is_solved",
     "step_index",
     "round_index",
-    "wave_index",
+    "dep_level",
     "role_name",
     "llm_name",
     "latency_seconds",
+    "spatial_predecessors",
+    "spatial_successors",
 )
 
 
@@ -348,10 +338,12 @@ if __name__ == '__main__':
                                 "record_type": "step",
                                 "step_index": step.get("step_index", ""),
                                 "round_index": step.get("round_index", ""),
-                                "wave_index": step.get("wave_index", ""),
+                                "dep_level": step.get("dep_level", ""),
                                 "role_name": step.get("role_name", ""),
                                 "llm_name": step.get("llm_name", ""),
                                 "latency_seconds": step.get("latency_seconds", 0.0),
+                                "spatial_predecessors": step.get("spatial_predecessors", ""),
+                                "spatial_successors": step.get("spatial_successors", ""),
                                 "llm_elapsed_seconds": step.get("llm_elapsed_seconds", llm_elapsed),
                             }
                         )
@@ -534,10 +526,16 @@ if __name__ == '__main__':
                     "result": results[0],
                     "cost": costs[0],
                     "log_prob": log_probs[0],
-                    # Pass metrics to result payload
                     "workflow_latency_seconds": w_latency,
                     "llm_elapsed_seconds": l_elapsed,
                     "transitions": transitions,
+                    "task_name": wf_data.get("task_name", ""),
+                    "reasoning_name": wf_data.get("reasoning_name", ""),
+                    "graph_id": wf_data.get("graph_id", ""),
+                    "num_agents": wf_data.get("num_agents", 0),
+                    "agent_roles_json": wf_data.get("agent_roles_json", ""),
+                    "agent_llms_json": wf_data.get("agent_llms_json", ""),
+                    "role_llm_map_json": wf_data.get("role_llm_map_json", ""),
                 }
 
             items = test_dataset.df.to_dict("records")
@@ -578,21 +576,19 @@ if __name__ == '__main__':
                 result = payload["result"]
                 cost = payload["cost"]
 
-                # Extract metrics and transitions
                 w_latency = payload.get("workflow_latency_seconds", 0.0)
                 l_elapsed = payload.get("llm_elapsed_seconds", 0.0)
                 transitions = payload.get("transitions", [])
-                wave_stats = _compute_wave_stats(transitions)
-                workflow_slack_seconds = 0.0
-                for step in transitions:
-                    key = (step.get("round_index", ""), step.get("wave_index", ""))
-                    try:
-                        latency = float(step.get("latency_seconds", 0.0) or 0.0)
-                    except (TypeError, ValueError):
-                        latency = 0.0
-                    wave_max = float(wave_stats.get(key, {}).get("max_latency", 0.0) or 0.0)
-                    if wave_max > latency:
-                        workflow_slack_seconds += (wave_max - latency)
+
+                topo_meta = {
+                    "task_name": payload.get("task_name", ""),
+                    "reasoning_name": payload.get("reasoning_name", ""),
+                    "graph_id": payload.get("graph_id", ""),
+                    "num_agents": payload.get("num_agents", 0),
+                    "agent_roles_json": payload.get("agent_roles_json", ""),
+                    "agent_llms_json": payload.get("agent_llms_json", ""),
+                    "role_llm_map_json": payload.get("role_llm_map_json", ""),
+                }
 
                 eval_start_ts = time.time()
                 match = re.search(pattern, result, re.DOTALL | re.MULTILINE)
@@ -607,9 +603,7 @@ if __name__ == '__main__':
                 total_executed = total_executed + 1
                 utility = is_solved - cost * args.cost_rate
 
-                # Build CSV rows: episode record + step records with metrics
                 csv_rows = []
-                # Episode-level record
                 csv_rows.append({
                     "run_id": current_time,
                     "dataset": args.domain,
@@ -617,6 +611,7 @@ if __name__ == '__main__':
                     "batch_id": "",
                     "item_id": str(item_id),
                     "record_type": "episode",
+                    **topo_meta,
                     "quality_is_correct": bool(is_solved),
                     "quality_feedback": feedback,
                     "quality_state_json": list(state) if state else "",
@@ -624,21 +619,10 @@ if __name__ == '__main__':
                     "utility": utility,
                     "workflow_latency_seconds": w_latency,
                     "llm_elapsed_seconds": l_elapsed,
-                    "workflow_slack_seconds": workflow_slack_seconds,
                     "arrival_rate": arrival_rate,
                     "arrival_pattern": args.arrival_pattern,
                 })
-                # Step-level records with vLLM system metrics
                 for step in transitions:
-                    key = (step.get("round_index", ""), step.get("wave_index", ""))
-                    wave_max = float(wave_stats.get(key, {}).get("max_latency", 0.0) or 0.0)
-                    wave_size = int(wave_stats.get(key, {}).get("count", 0) or 0)
-                    try:
-                        latency = float(step.get("latency_seconds", 0.0) or 0.0)
-                    except (TypeError, ValueError):
-                        latency = 0.0
-                    wave_slack = max(wave_max - latency, 0.0)
-                    wave_slack_pct = (wave_slack / wave_max * 100.0) if wave_max > 0 else 0.0
                     csv_rows.append({
                         "run_id": current_time,
                         "dataset": args.domain,
@@ -646,23 +630,21 @@ if __name__ == '__main__':
                         "batch_id": "",
                         "item_id": str(item_id),
                         "record_type": "step",
+                        **topo_meta,
                         "quality_is_correct": bool(is_solved),
                         "workflow_latency_seconds": w_latency,
                         "llm_elapsed_seconds": l_elapsed,
-                        "workflow_slack_seconds": workflow_slack_seconds,
                         "arrival_rate": arrival_rate,
                         "arrival_pattern": args.arrival_pattern,
                         "step_index": step.get("step_index", ""),
                         "round_index": step.get("round_index", ""),
-                        "wave_index": step.get("wave_index", ""),
+                        "dep_level": step.get("dep_level", ""),
                         "role_name": step.get("role_name", ""),
                         "llm_name": step.get("llm_name", ""),
                         "latency_seconds": step.get("latency_seconds", 0.0),
                         "node_id": step.get("node_id", ""),
-                        "wave_max_latency_seconds": wave_max,
-                        "wave_slack_seconds": wave_slack,
-                        "wave_slack_pct": wave_slack_pct,
-                        "wave_size": wave_size,
+                        "spatial_predecessors": step.get("spatial_predecessors", ""),
+                        "spatial_successors": step.get("spatial_successors", ""),
                         # vLLM system metrics
                         "observed_ttft": step.get("observed_ttft", 0.0),
                         "observed_tpot": step.get("observed_tpot", 0.0),
@@ -715,22 +697,20 @@ if __name__ == '__main__':
                         test_progress.update(success=False, models=None)
                         continue
 
-                    # Get metrics and transitions for specific item in batch
                     wf_data = compact_workflows[idx] if idx < len(compact_workflows) else {}
                     w_latency = wf_data.get("workflow_latency_seconds", 0.0)
                     l_elapsed = wf_data.get("llm_elapsed_seconds", 0.0)
                     transitions = wf_data.get("transitions", [])
-                    wave_stats = _compute_wave_stats(transitions)
-                    workflow_slack_seconds = 0.0
-                    for step in transitions:
-                        key = (step.get("round_index", ""), step.get("wave_index", ""))
-                        try:
-                            latency = float(step.get("latency_seconds", 0.0) or 0.0)
-                        except (TypeError, ValueError):
-                            latency = 0.0
-                        wave_max = float(wave_stats.get(key, {}).get("max_latency", 0.0) or 0.0)
-                        if wave_max > latency:
-                            workflow_slack_seconds += (wave_max - latency)
+
+                    topo_meta = {
+                        "task_name": wf_data.get("task_name", ""),
+                        "reasoning_name": wf_data.get("reasoning_name", ""),
+                        "graph_id": wf_data.get("graph_id", ""),
+                        "num_agents": wf_data.get("num_agents", 0),
+                        "agent_roles_json": wf_data.get("agent_roles_json", ""),
+                        "agent_llms_json": wf_data.get("agent_llms_json", ""),
+                        "role_llm_map_json": wf_data.get("role_llm_map_json", ""),
+                    }
 
                     eval_start_ts = time.time()
                     match = re.search(pattern, result, re.DOTALL|re.MULTILINE)
@@ -746,9 +726,7 @@ if __name__ == '__main__':
                     utility = is_solved - cost * args.cost_rate
                     utilities.append(utility)
 
-                    # Build CSV rows: episode record + step records with metrics
                     csv_rows = []
-                    # Episode-level record
                     csv_rows.append({
                         "run_id": current_time,
                         "dataset": args.domain,
@@ -756,6 +734,7 @@ if __name__ == '__main__':
                         "batch_id": i_batch,
                         "item_id": str(item_id),
                         "record_type": "episode",
+                        **topo_meta,
                         "quality_is_correct": bool(is_solved),
                         "quality_feedback": feedback,
                         "quality_state_json": list(state) if state else "",
@@ -763,21 +742,10 @@ if __name__ == '__main__':
                         "utility": utility,
                         "workflow_latency_seconds": w_latency,
                         "llm_elapsed_seconds": l_elapsed,
-                        "workflow_slack_seconds": workflow_slack_seconds,
                         "arrival_rate": arrival_rate,
                         "arrival_pattern": args.arrival_pattern,
                     })
-                    # Step-level records with vLLM system metrics
                     for step in transitions:
-                        key = (step.get("round_index", ""), step.get("wave_index", ""))
-                        wave_max = float(wave_stats.get(key, {}).get("max_latency", 0.0) or 0.0)
-                        wave_size = int(wave_stats.get(key, {}).get("count", 0) or 0)
-                        try:
-                            latency = float(step.get("latency_seconds", 0.0) or 0.0)
-                        except (TypeError, ValueError):
-                            latency = 0.0
-                        wave_slack = max(wave_max - latency, 0.0)
-                        wave_slack_pct = (wave_slack / wave_max * 100.0) if wave_max > 0 else 0.0
                         csv_rows.append({
                             "run_id": current_time,
                             "dataset": args.domain,
@@ -785,23 +753,21 @@ if __name__ == '__main__':
                             "batch_id": i_batch,
                             "item_id": str(item_id),
                             "record_type": "step",
+                            **topo_meta,
                             "quality_is_correct": bool(is_solved),
                             "workflow_latency_seconds": w_latency,
                             "llm_elapsed_seconds": l_elapsed,
-                            "workflow_slack_seconds": workflow_slack_seconds,
                             "arrival_rate": arrival_rate,
                             "arrival_pattern": args.arrival_pattern,
                             "step_index": step.get("step_index", ""),
                             "round_index": step.get("round_index", ""),
-                            "wave_index": step.get("wave_index", ""),
+                            "dep_level": step.get("dep_level", ""),
                             "role_name": step.get("role_name", ""),
                             "llm_name": step.get("llm_name", ""),
                             "latency_seconds": step.get("latency_seconds", 0.0),
                             "node_id": step.get("node_id", ""),
-                            "wave_max_latency_seconds": wave_max,
-                            "wave_slack_seconds": wave_slack,
-                            "wave_slack_pct": wave_slack_pct,
-                            "wave_size": wave_size,
+                            "spatial_predecessors": step.get("spatial_predecessors", ""),
+                            "spatial_successors": step.get("spatial_successors", ""),
                             # vLLM system metrics
                             "observed_ttft": step.get("observed_ttft", 0.0),
                             "observed_tpot": step.get("observed_tpot", 0.0),

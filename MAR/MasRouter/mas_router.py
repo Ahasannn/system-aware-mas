@@ -350,8 +350,16 @@ class MasRouter(nn.Module):
                     telemetry_writer.append_rows([workflow_row, *node_rows])
 
             cost_delta = float(sum(event.cost_delta for event in trace.node_events))
+            role_llm_map = [{"role": r, "llm": l} for r, l in zip(role_names, llm_names)]
             compact = {
                 "item_id": item_id,
+                "task_name": task.get("Name", ""),
+                "reasoning_name": collab["Name"],
+                "graph_id": graph_id,
+                "num_agents": len(llm_names),
+                "agent_roles_json": json.dumps(role_names),
+                "agent_llms_json": json.dumps(llm_names),
+                "role_llm_map_json": json.dumps(role_llm_map),
                 "topology": collab["Name"],
                 "role_set": role_names,
                 "workflow_latency_seconds": workflow_latency,
@@ -362,7 +370,8 @@ class MasRouter(nn.Module):
 
         skipped_indices = set()
         if len(entries) > 1:
-            with ThreadPoolExecutor(max_workers=len(entries)) as executor:
+            # Limit concurrent workers to prevent memory overload
+            with ThreadPoolExecutor(max_workers=min(4, len(entries))) as executor:
                 futures = [executor.submit(run_entry, entry) for entry in entries]
                 for future in as_completed(futures):
                     idx, output, cost_delta, compact = future.result()

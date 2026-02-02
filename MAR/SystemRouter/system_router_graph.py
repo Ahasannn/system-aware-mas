@@ -1,6 +1,5 @@
 import threading
 import time
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any, Dict, List, Optional, Tuple
 
 import torch
@@ -52,7 +51,6 @@ class SystemRouterGraph(Graph):
         llm_elapsed_seconds = 0.0
 
         transitions: Dict[Tuple[int, str], Dict[str, Any]] = {}
-        transitions_lock = threading.Lock()
         token_tally = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
 
         def _final_output_text(node) -> str:
@@ -87,35 +85,23 @@ class SystemRouterGraph(Graph):
             prompt_tokens = int(usage.get("prompt_tokens", 0.0))
             completion_tokens = int(usage.get("completion_tokens", 0.0))
             total_tokens = prompt_tokens + completion_tokens
-            with transitions_lock:
-                token_tally["prompt_tokens"] += prompt_tokens
-                token_tally["completion_tokens"] += completion_tokens
-                token_tally["total_tokens"] += total_tokens
+            token_tally["prompt_tokens"] += prompt_tokens
+            token_tally["completion_tokens"] += completion_tokens
+            token_tally["total_tokens"] += total_tokens
             return {
                 "prompt_tokens": prompt_tokens,
                 "completion_tokens": completion_tokens,
                 "total_tokens": total_tokens,
             }
 
-        def select_actions(node_ids: List[str], round_idx: int, wave_idx: int) -> None:
+        def select_action_single(node_id: str, round_idx: int, level: int, path_latency: float) -> None:
             nonlocal step_counter
-            for node_id in node_ids:
-                node = self.nodes[node_id]
-                role_name = _safe_role_name(node)
-                if router_lock:
-                    with router_lock:
-                        role_embedding = router.encode_role(role_name)
-                        budget_remaining = max(budget_total - llm_elapsed_seconds, 0.0)
-                        state_vector = system_state_vector
-                        if state_vector is None:
-                            state_vector = router.get_system_state_vector(query_embedding.dtype)
-                        exec_state = router.assemble_executor_state(
-                            query_embedding, role_embedding, budget_remaining, state_vector
-                        )
-                        exec_action = router.get_executor_action(exec_state, deterministic=deterministic)
-                else:
+            node = self.nodes[node_id]
+            role_name = _safe_role_name(node)
+            budget_remaining = max(budget_total - path_latency, 0.0)
+            if router_lock:
+                with router_lock:
                     role_embedding = router.encode_role(role_name)
-                    budget_remaining = max(budget_total - llm_elapsed_seconds, 0.0)
                     state_vector = system_state_vector
                     if state_vector is None:
                         state_vector = router.get_system_state_vector(query_embedding.dtype)
@@ -123,32 +109,49 @@ class SystemRouterGraph(Graph):
                         query_embedding, role_embedding, budget_remaining, state_vector
                     )
                     exec_action = router.get_executor_action(exec_state, deterministic=deterministic)
-                model_idx = int(exec_action["model_index"].item())
-                strategy_idx = int(exec_action["strategy_index"].item())
-                model_name = router.models[model_idx]
-                strategy_name = router.strategies[strategy_idx]
+            else:
+                role_embedding = router.encode_role(role_name)
+                state_vector = system_state_vector
+                if state_vector is None:
+                    state_vector = router.get_system_state_vector(query_embedding.dtype)
+                exec_state = router.assemble_executor_state(
+                    query_embedding, role_embedding, budget_remaining, state_vector
+                )
+                exec_action = router.get_executor_action(exec_state, deterministic=deterministic)
+            model_idx = int(exec_action["model_index"].item())
+            strategy_idx = int(exec_action["strategy_index"].item())
+            model_name = router.models[model_idx]
+            strategy_name = router.strategies[strategy_idx]
 
-                if hasattr(node, "set_llm"):
-                    node.set_llm(model_name)
-                else:
-                    setattr(node, "llm_name", model_name)
-                if hasattr(node, "set_strategy"):
-                    node.set_strategy(strategy_name)
+            if hasattr(node, "set_llm"):
+                node.set_llm(model_name)
+            else:
+                setattr(node, "llm_name", model_name)
+            if hasattr(node, "set_strategy"):
+                node.set_strategy(strategy_name)
 
-                transitions[(round_idx, node_id)] = {
-                    "state": exec_state,
-                    "action": exec_action,
-                    "role": role_name,
-                    "step_index": step_counter,
-                    "round_index": round_idx,
-                    "wave_index": wave_idx,
-                    "node_id": node_id,
-                    "model": model_name,
-                    "strategy": strategy_name,
-                    "budget_remaining": float(budget_remaining),
-                    "llm_elapsed_seconds": float(llm_elapsed_seconds),
-                }
-                step_counter += 1
+            predecessors = "|".join(
+                p.id for p in node.spatial_predecessors if p.id in self.nodes
+            )
+            successors = "|".join(
+                s.id for s in node.spatial_successors if s.id in self.nodes
+            )
+            transitions[(round_idx, node_id)] = {
+                "state": exec_state,
+                "action": exec_action,
+                "role": role_name,
+                "step_index": step_counter,
+                "round_index": round_idx,
+                "dep_level": level,
+                "node_id": node_id,
+                "model": model_name,
+                "strategy": strategy_name,
+                "budget_remaining": float(budget_remaining),
+                "llm_elapsed_seconds": float(path_latency),
+                "spatial_predecessors": predecessors,
+                "spatial_successors": successors,
+            }
+            step_counter += 1
 
         def run_node(node_id: str, round_idx: int) -> None:
             node = self.nodes[node_id]
@@ -163,15 +166,14 @@ class SystemRouterGraph(Graph):
             if not snap:
                 from loguru import logger
                 logger.trace("[Graph] No metrics found for model '{}'. Available: {}", model_name, list(model_metrics.keys()))
-            with transitions_lock:
-                transition["llm_running"] = snap.get("num_requests_running", 0)
-                transition["llm_waiting"] = snap.get("num_requests_waiting", 0)
-                transition["llm_kv_cache_usage"] = snap.get("kv_cache_usage_perc", 0.0)
-                transition["llm_ttft_avg"] = snap.get("ttft_avg", 0.0)
-                transition["llm_itl_avg"] = snap.get("itl_avg", 0.0)
-                transition["llm_e2e_avg"] = snap.get("e2e_avg", 0.0)
-                transition["llm_queue_avg"] = snap.get("queue_avg", 0.0)
-                transition["llm_inference_avg"] = snap.get("inference_avg", 0.0)
+            transition["llm_running"] = snap.get("num_requests_running", 0)
+            transition["llm_waiting"] = snap.get("num_requests_waiting", 0)
+            transition["llm_kv_cache_usage"] = snap.get("kv_cache_usage_perc", 0.0)
+            transition["llm_ttft_avg"] = snap.get("ttft_avg", 0.0)
+            transition["llm_itl_avg"] = snap.get("itl_avg", 0.0)
+            transition["llm_e2e_avg"] = snap.get("e2e_avg", 0.0)
+            transition["llm_queue_avg"] = snap.get("queue_avg", 0.0)
+            transition["llm_inference_avg"] = snap.get("inference_avg", 0.0)
             tries = 0
             success = False
             error_msg = ""
@@ -196,17 +198,14 @@ class SystemRouterGraph(Graph):
             observed_ttft = float(getattr(node, "last_ttft", 0.0))
             observed_tpot = float(getattr(node, "last_tpot", 0.0))
 
-            with transitions_lock:
-                transition["latency_seconds"] = duration_sec
-                transition["response"] = response_text
-                transition["prompt_base"] = prompt_base
-                transition["token_counts"] = token_counts
-                transition["observed_ttft"] = observed_ttft
-                transition["observed_tpot"] = observed_tpot
-                transition["success"] = success
-                transition["error"] = error_msg
-                transition["success"] = bool(success)
-                transition["error"] = error_msg
+            transition["latency_seconds"] = duration_sec
+            transition["response"] = response_text
+            transition["prompt_base"] = prompt_base
+            transition["token_counts"] = token_counts
+            transition["observed_ttft"] = observed_ttft
+            transition["observed_tpot"] = observed_tpot
+            transition["success"] = bool(success)
+            transition["error"] = error_msg
 
             if trace is not None:
                 trace.record_node_event(
@@ -238,47 +237,56 @@ class SystemRouterGraph(Graph):
                 log_probs += self.construct_spatial_connection()
                 log_probs += self.construct_temporal_connection(round_idx)
 
+                # Topological sort via BFS to get execution order and dependency levels
                 in_degree = {
                     node_id: len(node.spatial_predecessors) for node_id, node in self.nodes.items()
                 }
-                zero_in_degree_queue = [node_id for node_id, deg in in_degree.items() if deg == 0]
-                wave_idx = 0
+                queue = [node_id for node_id, deg in in_degree.items() if deg == 0]
+                exec_order: List[str] = []
+                dep_level_map: Dict[str, int] = {nid: 0 for nid in queue}
+                bfs_queue = list(queue)
+                while bfs_queue:
+                    nid = bfs_queue.pop(0)
+                    exec_order.append(nid)
+                    for successor in self.nodes[nid].spatial_successors:
+                        if successor.id not in self.nodes:
+                            continue
+                        new_level = dep_level_map[nid] + 1
+                        dep_level_map[successor.id] = max(dep_level_map.get(successor.id, 0), new_level)
+                        in_degree[successor.id] -= 1
+                        if in_degree[successor.id] == 0:
+                            bfs_queue.append(successor.id)
 
-                while zero_in_degree_queue:
-                    current_wave_ids = zero_in_degree_queue
-                    zero_in_degree_queue = []
+                # Per-node cumulative path latency (max ancestor path to this node)
+                node_path_latency: Dict[str, float] = {}
 
-                    select_actions(current_wave_ids, round_idx, wave_idx)
-
-                    max_workers = len(current_wave_ids)
-                    if max_workers <= 1:
-                        for node_id in current_wave_ids:
-                            run_node(node_id, round_idx)
+                # Execute nodes sequentially in topological order
+                for nid in exec_order:
+                    node = self.nodes[nid]
+                    # Compute path latency: max of (pred path + pred own latency)
+                    preds = [p for p in node.spatial_predecessors if p.id in self.nodes]
+                    if not preds:
+                        node_path_latency[nid] = llm_elapsed_seconds  # carry over from previous rounds
                     else:
-                        with ThreadPoolExecutor(max_workers=max_workers) as executor:
-                            futures = [
-                                executor.submit(run_node, node_id, round_idx) for node_id in current_wave_ids
-                            ]
-                            for future in as_completed(futures):
-                                future.result()
+                        node_path_latency[nid] = max(
+                            node_path_latency[p.id]
+                            + float(transitions[(round_idx, p.id)].get("latency_seconds", 0.0))
+                            for p in preds
+                        )
 
-                    wave_max_latency = 0.0
-                    for node_id in current_wave_ids:
-                        transition = transitions.get((round_idx, node_id))
-                        if transition:
-                            latency = float(transition.get("latency_seconds", 0.0))
-                            if latency > wave_max_latency:
-                                wave_max_latency = latency
-                    llm_elapsed_seconds += wave_max_latency
+                    # Select action with exact path-based budget
+                    select_action_single(nid, round_idx, dep_level_map[nid], node_path_latency[nid])
 
-                    for node_id in current_wave_ids:
-                        for successor in self.nodes[node_id].spatial_successors:
-                            if successor.id not in self.nodes.keys():
-                                continue
-                            in_degree[successor.id] -= 1
-                            if in_degree[successor.id] == 0:
-                                zero_in_degree_queue.append(successor.id)
-                    wave_idx += 1
+                    # Execute the node
+                    run_node(nid, round_idx)
+
+                # Update llm_elapsed_seconds to the critical path through this round
+                if exec_order:
+                    llm_elapsed_seconds = max(
+                        node_path_latency[nid]
+                        + float(transitions[(round_idx, nid)].get("latency_seconds", 0.0))
+                        for nid in exec_order
+                    )
 
                 self.update_memory()
 
@@ -334,16 +342,8 @@ class SystemRouterGraph(Graph):
                     )
                 )
 
-            wave_max_latency: Dict[Tuple[int, int], float] = {}
-            for transition in transitions.values():
-                latency = float(transition.get("latency_seconds", 0.0))
-                round_index = int(transition.get("round_index", 0) or 0)
-                wave_index = int(transition.get("wave_index", 0) or 0)
-                key = (round_index, wave_index)
-                prev = wave_max_latency.get(key, 0.0)
-                if latency > prev:
-                    wave_max_latency[key] = latency
-            workflow_latency = float(sum(wave_max_latency.values()))
+            # Workflow latency = critical path through the DAG (already computed as llm_elapsed_seconds)
+            workflow_latency = float(llm_elapsed_seconds)
             ordered_transitions = sorted(transitions.values(), key=lambda item: item["step_index"])
             return {
                 "final_response": decision_text,

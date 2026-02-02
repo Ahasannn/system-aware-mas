@@ -4,6 +4,7 @@ from loguru import logger
 
 from MAR.Tools.coding.python_executor import execute_code_get_return
 from MAR.Tools.coding.python_executor import PyExecutor
+from MAR.Tools.coding.executor_utils import function_with_timeout
 from langchain_community.tools import WikipediaQueryRun
 from langchain_community.utilities import WikipediaAPIWrapper
 
@@ -91,7 +92,11 @@ def wiki(raw_inputs:Dict[str,str], output:str):
         keywords = match.group(0).lstrip("```keyword\n").rstrip("\n```")
         # Extract information from Wikipedia
         logger.info(f"keywords: {keywords}")
-        keywords = eval(keywords)
+        try:
+            keywords = function_with_timeout(eval, (keywords,), timeout=2)
+        except (TimeoutError, Exception):
+            logger.warning("Wiki keyword evaluation timed out or failed, skipping")
+            keywords = []
         wikipedia = WikipediaQueryRun(api_wrapper=WikipediaAPIWrapper(top_k_results=2))
         for keyword in keywords:
             if type(keyword) == str or type(keyword) == dict:

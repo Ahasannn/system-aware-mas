@@ -3,7 +3,7 @@ import os
 import random
 import threading
 import time
-from typing import Any, Dict, List, Optional, Sequence, Tuple
+from typing import Any, Dict, List, Optional, Sequence
 
 from loguru import logger
 import torch
@@ -54,12 +54,9 @@ SYSTEM_ROUTER_CSV_FIELDS: Sequence[str] = (
     "latency_seconds",
     "budget_remaining",
     "round_index",
-    "wave_index",
-    "wave_max_latency_seconds",
-    "wave_slack_seconds",
-    "wave_slack_pct",
-    "wave_size",
-    "workflow_slack_seconds",
+    "dep_level",
+    "spatial_predecessors",
+    "spatial_successors",
     "observed_ttft",
     "observed_tpot",
     "llm_running",
@@ -73,25 +70,6 @@ SYSTEM_ROUTER_CSV_FIELDS: Sequence[str] = (
     "prompt_base",
     "response_final",
 )
-
-
-def _compute_wave_stats(transitions: Sequence[Dict[str, Any]]) -> Dict[Tuple[int, int], Dict[str, float]]:
-    """Return per-(round_index, wave_index) max latency and wave size."""
-    wave_stats: Dict[Tuple[int, int], Dict[str, float]] = {}
-    for step in transitions or []:
-        key = (int(step.get("round_index", 0) or 0), int(step.get("wave_index", 0) or 0))
-        try:
-            latency = float(step.get("latency_seconds", 0.0) or 0.0)
-        except (TypeError, ValueError):
-            latency = 0.0
-        stat = wave_stats.get(key)
-        if stat is None:
-            wave_stats[key] = {"max_latency": latency, "count": 1}
-        else:
-            if latency > stat["max_latency"]:
-                stat["max_latency"] = latency
-            stat["count"] += 1
-    return wave_stats
 
 
 def _default_run_id() -> str:
@@ -330,17 +308,6 @@ def main(default_dataset: str = "mbpp") -> None:
                     episode_counter += 1
                     quality_pred = episode.get("quality_pred")
                     quality_gold = episode.get("quality_gold") or answer
-                    wave_stats = _compute_wave_stats(episode["executor_transitions"])
-                    workflow_slack_seconds = 0.0
-                    for step in episode["executor_transitions"]:
-                        key = (int(step.get("round_index", 0) or 0), int(step.get("wave_index", 0) or 0))
-                        try:
-                            latency = float(step.get("latency_seconds", 0.0) or 0.0)
-                        except (TypeError, ValueError):
-                            latency = 0.0
-                        wave_max = float(wave_stats.get(key, {}).get("max_latency", 0.0) or 0.0)
-                        if wave_max > latency:
-                            workflow_slack_seconds += (wave_max - latency)
                     csv_rows: List[Dict[str, Any]] = [
                         {
                             "run_id": run_id,
@@ -365,7 +332,6 @@ def main(default_dataset: str = "mbpp") -> None:
                             "quality_gold": quality_gold,
                             "workflow_latency_seconds": episode["workflow_latency_seconds"],
                             "llm_elapsed_seconds": episode.get("llm_elapsed_seconds", 0.0),
-                            "workflow_slack_seconds": workflow_slack_seconds,
                             "final_response": episode["response"],
                             "code_response": episode.get("code_response", ""),
                             "prompt_tokens": episode["token_counts"].get("prompt_tokens", 0),
@@ -376,15 +342,6 @@ def main(default_dataset: str = "mbpp") -> None:
 
                     for step in episode["executor_transitions"]:
                         token_counts = step.get("token_counts", {})
-                        key = (int(step.get("round_index", 0) or 0), int(step.get("wave_index", 0) or 0))
-                        wave_max = float(wave_stats.get(key, {}).get("max_latency", 0.0) or 0.0)
-                        wave_size = int(wave_stats.get(key, {}).get("count", 0) or 0)
-                        try:
-                            latency = float(step.get("latency_seconds", 0.0) or 0.0)
-                        except (TypeError, ValueError):
-                            latency = 0.0
-                        wave_slack = max(wave_max - latency, 0.0)
-                        wave_slack_pct = (wave_slack / wave_max * 100.0) if wave_max > 0 else 0.0
                         csv_rows.append(
                             {
                                 "run_id": run_id,
@@ -411,12 +368,9 @@ def main(default_dataset: str = "mbpp") -> None:
                                 "latency_seconds": step.get("latency_seconds", 0.0),
                                 "budget_remaining": step.get("budget_remaining", 0.0),
                                 "round_index": step.get("round_index", 0),
-                                "wave_index": step.get("wave_index", 0),
-                                "wave_max_latency_seconds": wave_max,
-                                "wave_slack_seconds": wave_slack,
-                                "wave_slack_pct": wave_slack_pct,
-                                "wave_size": wave_size,
-                                "workflow_slack_seconds": workflow_slack_seconds,
+                                "dep_level": step.get("dep_level", 0),
+                                "spatial_predecessors": step.get("spatial_predecessors", ""),
+                                "spatial_successors": step.get("spatial_successors", ""),
                                 "observed_ttft": step.get("observed_ttft", 0.0),
                                 "observed_tpot": step.get("observed_tpot", 0.0),
                                 "llm_running": step.get("llm_running", 0),

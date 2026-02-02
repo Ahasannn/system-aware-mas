@@ -5,6 +5,7 @@ import ast
 import astunparse
 import contextlib
 import io
+import multiprocessing as mp
 from typing import List
 
 from MAR.Tools.coding.executor_utils import function_with_timeout
@@ -32,16 +33,40 @@ def get_output(func: str, assert_statement: str, timeout: int = 5) -> str:
     except Exception as e:
         return str(e)
     
-def execute_code_get_return(code: str):
+def _exec_worker(code: str, result_queue: mp.Queue):
+    """Worker function for multiprocessing-based code execution."""
     local_vars = {}
     try:
         exec(code, {}, local_vars)
-        if 'answer' in local_vars:
-            return local_vars['answer']
-        else:
-            return None
+        result_queue.put(("ok", local_vars.get("answer")))
     except Exception as e:
-        return f"Error occurred: {e}"
+        result_queue.put(("error", f"Error occurred: {e}"))
+
+
+def execute_code_get_return(code: str, timeout: int = 10):
+    """Execute code with hard timeout using multiprocessing.
+
+    Unlike threading, child processes can be forcibly killed via
+    terminate()/kill() when the timeout expires, preventing runaway
+    computations (e.g. 2**10000000) from blocking training forever.
+    """
+    result_queue = mp.Queue()
+    proc = mp.Process(target=_exec_worker, args=(code, result_queue))
+    proc.start()
+    proc.join(timeout)
+
+    if proc.is_alive():
+        proc.terminate()
+        proc.join(1)
+        if proc.is_alive():
+            proc.kill()
+        return f"Timeout: code execution exceeded {timeout}s"
+
+    try:
+        status, value = result_queue.get_nowait()
+        return value if status == "ok" else value
+    except Exception:
+        return None
 
 class PyExecutor(Executor):
     def execute(self, func: str, tests: List[str], timeout: int = 5, verbose: bool = True) -> ExecuteResult:

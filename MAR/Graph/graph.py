@@ -2,11 +2,9 @@ import shortuuid
 from typing import Any, List, Optional, Dict, Tuple
 from abc import ABC
 import time
-import threading
 import numpy as np
 import torch
 import asyncio
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from loguru import logger
 
 from MAR.Graph.node import Node
@@ -298,7 +296,6 @@ class Graph(ABC):
         step_counter = 0
         llm_elapsed_seconds = 0.0
         transitions: Dict[Tuple[int, str], Dict[str, Any]] = {}
-        transitions_lock = threading.Lock()
         workflow_error = ""
         try:
             usage_tracker = LLMUsageTracker.instance()
@@ -306,151 +303,159 @@ class Graph(ABC):
                 log_probs += self.construct_spatial_connection()
                 log_probs += self.construct_temporal_connection(round)
 
+                # Topological sort via BFS to get execution order
                 in_degree = {node_id: len(node.spatial_predecessors) for node_id, node in self.nodes.items()}
-                zero_in_degree_queue = [node_id for node_id, deg in in_degree.items() if deg == 0]
-                wave_idx = 0
+                queue = [node_id for node_id, deg in in_degree.items() if deg == 0]
+                exec_order: List[str] = []
+                # Compute dependency level for each node (longest path from root)
+                dep_level: Dict[str, int] = {nid: 0 for nid in queue}
+                bfs_queue = list(queue)
+                while bfs_queue:
+                    nid = bfs_queue.pop(0)
+                    exec_order.append(nid)
+                    for successor in self.nodes[nid].spatial_successors:
+                        if successor.id not in self.nodes:
+                            continue
+                        new_level = dep_level[nid] + 1
+                        dep_level[successor.id] = max(dep_level.get(successor.id, 0), new_level)
+                        in_degree[successor.id] -= 1
+                        if in_degree[successor.id] == 0:
+                            bfs_queue.append(successor.id)
 
-                while zero_in_degree_queue:
-                    current_wave_ids = zero_in_degree_queue
-                    zero_in_degree_queue = []
-                    wave_step_indices = {
-                        node_id: step_counter + offset for offset, node_id in enumerate(current_wave_ids)
-                    }
-                    step_counter += len(current_wave_ids)
+                def run_node(node_id: str) -> None:
+                    node = self.nodes[node_id]
+                    ts_start = utc_now_iso()
+                    start_perf = time.perf_counter()
+                    usage_key = f"{self.id}:{round}:{node_id}"
+                    context_token = usage_tracker.set_context(usage_key)
+                    usage_tracker.clear(usage_key)
+                    usage = {"cost": 0.0, "prompt_tokens": 0.0, "completion_tokens": 0.0}
 
-                    for node_id in current_wave_ids:
-                        node = self.nodes[node_id]
-                        transitions[(round, node_id)] = {
-                            "step_index": wave_step_indices[node_id],
-                            "round_index": round,
-                            "wave_index": wave_idx,
-                            "node_id": node_id,
-                            "role_name": _safe_role_name(node),
-                            "llm_name": "",
-                            "latency_seconds": 0.0,
-                            "llm_elapsed_seconds": float(llm_elapsed_seconds),
-                        }
+                    # Capture vLLM metrics snapshot before execution
+                    pre_llm_name = _safe_llm_name(node)
+                    snap = model_metrics.get(pre_llm_name, {})
+                    transition = transitions.get((round, node_id))
+                    if transition is not None:
+                        transition["llm_running"] = snap.get("num_requests_running", 0)
+                        transition["llm_waiting"] = snap.get("num_requests_waiting", 0)
+                        transition["llm_kv_cache_usage"] = snap.get("kv_cache_usage_perc", 0.0)
+                        transition["llm_ttft_avg"] = snap.get("ttft_avg", 0.0)
+                        transition["llm_itl_avg"] = snap.get("itl_avg", 0.0)
+                        transition["llm_e2e_avg"] = snap.get("e2e_avg", 0.0)
+                        transition["llm_queue_avg"] = snap.get("queue_avg", 0.0)
+                        transition["llm_inference_avg"] = snap.get("inference_avg", 0.0)
 
-                    def run_node(node_id: str) -> None:
-                        node = self.nodes[node_id]
-                        role_name = _safe_role_name(node)
-                        llm_name = _safe_llm_name(node)
-                        ts_start = utc_now_iso()
-                        start_perf = time.perf_counter()
-                        usage_key = f"{self.id}:{round}:{node_id}"
-                        context_token = usage_tracker.set_context(usage_key)
-                        usage_tracker.clear(usage_key)
-                        usage = {"cost": 0.0, "prompt_tokens": 0.0, "completion_tokens": 0.0}
-
-                        # Capture vLLM metrics snapshot before execution
-                        pre_llm_name = _safe_llm_name(node)
-                        snap = model_metrics.get(pre_llm_name, {})
-                        with transitions_lock:
-                            transition = transitions.get((round, node_id))
-                            if transition is not None:
-                                transition["llm_running"] = snap.get("num_requests_running", 0)
-                                transition["llm_waiting"] = snap.get("num_requests_waiting", 0)
-                                transition["llm_kv_cache_usage"] = snap.get("kv_cache_usage_perc", 0.0)
-                                transition["llm_ttft_avg"] = snap.get("ttft_avg", 0.0)
-                                transition["llm_itl_avg"] = snap.get("itl_avg", 0.0)
-                                transition["llm_e2e_avg"] = snap.get("e2e_avg", 0.0)
-                                transition["llm_queue_avg"] = snap.get("queue_avg", 0.0)
-                                transition["llm_inference_avg"] = snap.get("inference_avg", 0.0)
-
-                        tries = 0
-                        success = False
-                        error_msg = ""
-                        timed_out = False
-                        try:
-                            while tries < max_tries:
-                                tries += 1
-                                try:
-                                    self._assign_runtime_llm(node_id)
-                                    self.nodes[node_id].execute(
-                                        inputs,
-                                        request_timeout=request_timeout,
-                                    )  # output is saved in the node.outputs
-                                    success = True
+                    tries = 0
+                    success = False
+                    error_msg = ""
+                    timed_out = False
+                    try:
+                        while tries < max_tries:
+                            tries += 1
+                            try:
+                                self._assign_runtime_llm(node_id)
+                                self.nodes[node_id].execute(
+                                    inputs,
+                                    request_timeout=request_timeout,
+                                )  # output is saved in the node.outputs
+                                success = True
+                                break
+                            except Exception as e:
+                                error_msg = str(e)
+                                print(f"[DEBUG] Graph {self.id}, Node {node_id}, Attempt {tries}/{max_tries} failed")
+                                print(f"[DEBUG] Exception type: {type(e).__name__}")
+                                print(f"[DEBUG] Exception message: {error_msg}")
+                                if isinstance(e, TimeoutError):
+                                    timed_out = True
                                     break
-                                except Exception as e:
-                                    error_msg = str(e)
-                                    print(f"[DEBUG] Graph {self.id}, Node {node_id}, Attempt {tries}/{max_tries} failed")
-                                    print(f"[DEBUG] Exception type: {type(e).__name__}")
-                                    print(f"[DEBUG] Exception message: {error_msg}")
-                                    if isinstance(e, TimeoutError):
-                                        timed_out = True
-                                        break
-                                    if tries >= max_tries:
-                                        logger.error(f"Graph {self.id}: Node {node_id} failed after {max_tries} attempts: {error_msg}")
-                                    else:
-                                        print(f"[DEBUG] Retrying node {node_id} (attempt {tries + 1}/{max_tries})...")
-                        finally:
-                            usage = usage_tracker.consume(usage_key)
-                            usage_tracker.reset_context(context_token)
-                        ts_end = utc_now_iso()
-                        duration_sec = time.perf_counter() - start_perf
-                        node = self.nodes[node_id]
-                        # Capture observed metrics after execution
-                        observed_ttft = float(getattr(node, "last_ttft", 0.0))
-                        observed_tpot = float(getattr(node, "last_tpot", 0.0))
-                        with transitions_lock:
-                            transition = transitions.get((round, node_id))
-                            if transition is not None:
-                                transition["llm_name"] = _safe_llm_name(node)
-                                transition["latency_seconds"] = duration_sec
-                                transition["observed_ttft"] = observed_ttft
-                                transition["observed_tpot"] = observed_tpot
-                        if trace is not None:
-                            output_text = ""
-                            trace.record_node_event(
-                                NodeTiming(
-                                    round_idx=round,
-                                    node_id=node_id,
-                                    node_name=node.node_name,
-                                    role_name=_safe_role_name(node),
-                                    llm_name=_safe_llm_name(node),
-                                    is_decision_node=False,
-                                    attempts=tries,
-                                    success=success,
-                                    error=error_msg,
-                                    ts_start=ts_start,
-                                    ts_end=ts_end,
-                                    duration_sec=duration_sec,
-                                    cost_delta=float(usage.get("cost", 0.0)),
-                                    prompt_tokens=int(usage.get("prompt_tokens", 0.0)),
-                                    completion_tokens=int(usage.get("completion_tokens", 0.0)),
-                                    output_text=output_text,
-                                )
+                                if tries >= max_tries:
+                                    logger.error(f"Graph {self.id}: Node {node_id} failed after {max_tries} attempts: {error_msg}")
+                                else:
+                                    print(f"[DEBUG] Retrying node {node_id} (attempt {tries + 1}/{max_tries})...")
+                    finally:
+                        usage = usage_tracker.consume(usage_key)
+                        usage_tracker.reset_context(context_token)
+                    ts_end = utc_now_iso()
+                    duration_sec = time.perf_counter() - start_perf
+                    node = self.nodes[node_id]
+                    # Capture observed metrics after execution
+                    observed_ttft = float(getattr(node, "last_ttft", 0.0))
+                    observed_tpot = float(getattr(node, "last_tpot", 0.0))
+                    transition = transitions.get((round, node_id))
+                    if transition is not None:
+                        transition["llm_name"] = _safe_llm_name(node)
+                        transition["latency_seconds"] = duration_sec
+                        transition["observed_ttft"] = observed_ttft
+                        transition["observed_tpot"] = observed_tpot
+                    if trace is not None:
+                        output_text = ""
+                        trace.record_node_event(
+                            NodeTiming(
+                                round_idx=round,
+                                node_id=node_id,
+                                node_name=node.node_name,
+                                role_name=_safe_role_name(node),
+                                llm_name=_safe_llm_name(node),
+                                is_decision_node=False,
+                                attempts=tries,
+                                success=success,
+                                error=error_msg,
+                                ts_start=ts_start,
+                                ts_end=ts_end,
+                                duration_sec=duration_sec,
+                                cost_delta=float(usage.get("cost", 0.0)),
+                                prompt_tokens=int(usage.get("prompt_tokens", 0.0)),
+                                completion_tokens=int(usage.get("completion_tokens", 0.0)),
+                                output_text=output_text,
                             )
-                        if timed_out:
-                            raise TimeoutError(error_msg or "LLM request timed out")
+                        )
+                    if timed_out:
+                        raise TimeoutError(error_msg or "LLM request timed out")
 
-                    max_workers = len(current_wave_ids)
-                    if max_workers <= 1:
-                        for node_id in current_wave_ids:
-                            run_node(node_id)
+                # Per-node cumulative path latency (max ancestor path to this node)
+                node_path_latency: Dict[str, float] = {}
+
+                # Execute nodes sequentially in topological order
+                for nid in exec_order:
+                    node = self.nodes[nid]
+                    # Compute path latency: max of (pred path + pred own latency)
+                    preds = [p for p in node.spatial_predecessors if p.id in self.nodes]
+                    if not preds:
+                        node_path_latency[nid] = llm_elapsed_seconds  # carry over from previous rounds
                     else:
-                        with ThreadPoolExecutor(max_workers=max_workers) as executor:
-                            futures = [executor.submit(run_node, node_id) for node_id in current_wave_ids]
-                            for future in as_completed(futures):
-                                future.result()
+                        node_path_latency[nid] = max(
+                            node_path_latency[p.id]
+                            + float(transitions[(round, p.id)].get("latency_seconds", 0.0))
+                            for p in preds
+                        )
 
-                    for node_id in current_wave_ids:
-                        for successor in self.nodes[node_id].spatial_successors:
-                            if successor.id not in self.nodes.keys():
-                                continue
-                            in_degree[successor.id] -= 1
-                            if in_degree[successor.id] == 0:
-                                zero_in_degree_queue.append(successor.id)
-                    wave_max_latency = 0.0
-                    for node_id in current_wave_ids:
-                        transition = transitions.get((round, node_id))
-                        if transition:
-                            latency = float(transition.get("latency_seconds", 0.0))
-                            if latency > wave_max_latency:
-                                wave_max_latency = latency
-                    llm_elapsed_seconds += wave_max_latency
-                    wave_idx += 1
+                    predecessors = "|".join(p.id for p in node.spatial_predecessors if p.id in self.nodes)
+                    successors = "|".join(s.id for s in node.spatial_successors if s.id in self.nodes)
+                    transitions[(round, nid)] = {
+                        "step_index": step_counter,
+                        "round_index": round,
+                        "dep_level": dep_level[nid],
+                        "node_id": nid,
+                        "role_name": _safe_role_name(node),
+                        "llm_name": "",
+                        "latency_seconds": 0.0,
+                        "llm_elapsed_seconds": float(node_path_latency[nid]),
+                        "spatial_predecessors": predecessors,
+                        "spatial_successors": successors,
+                    }
+                    step_counter += 1
+
+                    # Execute the node
+                    run_node(nid)
+
+                # Update llm_elapsed_seconds to the critical path through this round
+                if exec_order:
+                    llm_elapsed_seconds = max(
+                        node_path_latency[nid]
+                        + float(transitions[(round, nid)].get("latency_seconds", 0.0))
+                        for nid in exec_order
+                    )
+
                 self.update_memory()
 
             self.connect_decision_node()
