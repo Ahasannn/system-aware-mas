@@ -3,9 +3,9 @@ requires = ["setuptools>=68", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "system-aware-mas"
-version = "0.0.0"
-description = "MasRouter: Learning to Route LLMs for Multi-Agent Systems"
+name = "inframind"
+version = "0.1.0"
+description = "INFRAMIND: Infrastructure-Aware Multi-Agent Orchestration"
 readme = "README.md"
 requires-python = ">=3.10,<3.13"
 dependencies = [
