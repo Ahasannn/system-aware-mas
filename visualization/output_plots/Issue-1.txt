@@ -1,0 +1,4 @@
+Figure 1: Resource underutilization in static multi-agent LLM routing under varying load conditions.
+(a) Average queue depth comparison between small models (3-8B parameters) and large models (14-32B parameters) across different request arrival rates. At 200 req/min, small models experience severe congestion (queue depth ~133) while large models remain largely idle (queue depth ~8), a 17x disparity.
+(b) Average response latency showing the performance penalty of static routing. The shaded region represents avoidable latency—at high load, small models incur 30.1s latency compared to 11.8s for large models (2.6x higher), despite large models having available capacity.
+This demonstrates that conventional task-aware routing (MAS Router) fails to leverage infrastructure state, leaving capable models underutilized while overloading smaller ones. Results from MATH dataset with 1000 test samples under Poisson arrival patterns.

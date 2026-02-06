@@ -1,0 +1,4 @@
+Figure 2: Idle inference capacity represents missed opportunities for quality improvement.
+At low system load (10 req/min), DeepSeek-R1-Distill-Qwen-32B has zero active requests 61% of the time (measured via vLLM running/waiting queue metrics). This substantial idle capacity could be leveraged for additional reasoning passes, verification, or self-consistency checks to improve output quality.
+Static task-aware routing (MAS Router) fails to exploit this available capacity, routing requests based solely on task complexity rather than infrastructure availability. An infrastructure-aware system could utilize this idle time for quality-enhancing operations.
+Results from MATH dataset with 1000 test samples under Poisson arrival patterns.
