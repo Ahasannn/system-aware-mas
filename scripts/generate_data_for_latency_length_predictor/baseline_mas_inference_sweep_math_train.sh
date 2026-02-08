@@ -1,7 +1,8 @@
 #!/bin/bash
-# Baseline MAS Test Arrival Rate Sweep for MATH (Sustained High Load)
-# This script tests with sustained arrival pattern at high request rate
-# Arrival rates loaded from shared dataset config.
+# Baseline MAS Inference Sweep on MATH Training Data
+# Purpose: Collect latency/metrics data for latency-length predictor training.
+# Runs inference-only (epochs=0) with a pre-trained checkpoint on training data
+# under varying arrival rates to observe latency under different loads.
 
 set -euo pipefail
 
@@ -21,28 +22,27 @@ export MATH_DATASET_ROOT="${MATH_DATASET_ROOT:-${BLUE_STORAGE}/datasets/MATH}"
 DATASET_CONFIG="${REPO_ROOT}/Experiments/dataset_config.json"
 DATASET_NAME="math"
 
+TRAIN_LIMIT=$(python3 -c "import json; print(json.load(open('${DATASET_CONFIG}'))['${DATASET_NAME}']['train_limit'])")
 ARRIVAL_PATTERN=$(python3 -c "import json; print(json.load(open('${DATASET_CONFIG}'))['${DATASET_NAME}']['arrival_pattern'])")
 ARRIVAL_RATES=$(python3 -c "import json; print(' '.join(str(r) for r in json.load(open('${DATASET_CONFIG}'))['${DATASET_NAME}']['arrival_rates']))")
 
-# Test-specific settings (separate from training config)
-TEST_LIMIT=1000
+# Concurrency (max simultaneous threads — high value lets vLLM scheduler manage)
 CONCURRENCY=1000
 
 # Build run configs from shared dataset config
-# Key insight: Shared connection pool prevents connection explosion.
-# Requests queue inside httpx pool → flow into vLLM scheduler's waiting queue (CPU memory).
-# - With 5 models x 32 max_num_seqs = 160 running; rest wait in vLLM queues
 RUN_CONFIGS=()
 for rate in $ARRIVAL_RATES; do
     RUN_CONFIGS+=("${ARRIVAL_PATTERN} ${rate} ${CONCURRENCY}")
 done
 
-# Output CSV file
-OUTPUT_CSV="logs/motivation_plot_generator_data/baseline_motivation_sweep_math_test_${TEST_LIMIT}_${ARRIVAL_PATTERN}.csv"
-mkdir -p "$(dirname "$OUTPUT_CSV")"
+# Output directory and CSV file
+OUTPUT_DIR="logs/generate_data_for_latency_length_predictor"
+mkdir -p "$OUTPUT_DIR"
+OUTPUT_CSV="${OUTPUT_DIR}/baseline_mas_inference_math_train_${TRAIN_LIMIT}_${ARRIVAL_PATTERN}.csv"
 
 echo "========================================"
-echo "MATH Arrival Rate Sweep (Sustained)"
+echo "Latency-Length Predictor Data Generation"
+echo "Dataset: MATH (train split, ${TRAIN_LIMIT} stratified samples)"
 echo "Rates:   ${ARRIVAL_RATES}"
 echo "Pattern: ${ARRIVAL_PATTERN}"
 echo "Output:  ${OUTPUT_CSV}"
@@ -63,8 +63,10 @@ for pair in "${RUN_CONFIGS[@]}"; do
         --arrival-pattern "$pattern" \
         --checkpoint "${CHECKPOINT_DIR}/mas_math_train_full.pth" \
         --test-telemetry-csv "$OUTPUT_CSV" \
+        --test-split train \
+        --generate-predictor-data \
         --epochs 0 \
-        --test_limit "$TEST_LIMIT"
+        --test_limit "$TRAIN_LIMIT"
 
     echo "Completed run with arrival_rate=$arrival_rate, concurrency=$concurrency, pattern=$pattern"
     echo ""

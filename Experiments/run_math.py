@@ -95,6 +95,11 @@ BASELINE_TEST_FIELDS = (
     "llm_e2e_avg",
     "llm_queue_avg",
     "llm_inference_avg",
+    # Token counts and predictor training fields
+    "prompt_tokens",
+    "completion_tokens",
+    "strategy_name",
+    "query",
 )
 
 def load_result(result_file):
@@ -164,6 +169,21 @@ def parse_args():
         default=os.environ.get("MATH_DATASET_ROOT", "Datasets/MATH"),
         help="Root directory of the MATH dataset (expects train/ and test/).",
     )
+    parser.add_argument(
+        "--test-split",
+        type=str,
+        default="test",
+        choices=["train", "test"],
+        help="Which split to use for the test/inference phase (default: test). "
+             "Use 'train' to run inference on training data for data collection.",
+    )
+    parser.add_argument(
+        "--generate-predictor-data",
+        action="store_true",
+        default=False,
+        help="Inject random prompt strategies (Flash/Concise/DeepThink) per agent "
+             "during inference for latency-length predictor data collection.",
+    )
     args = parser.parse_args()
     return args
 
@@ -222,7 +242,8 @@ if __name__ == '__main__':
     test_stratified = args.test_limit if args.test_limit > 0 else 0
 
     train_dataset = load_math_dataset(dataset_root, split="train", stratified_limit=train_stratified)
-    test_dataset = load_math_dataset(dataset_root, split="test", stratified_limit=test_stratified)
+    test_split = getattr(args, "test_split", "test")
+    test_dataset = load_math_dataset(dataset_root, split=test_split, stratified_limit=test_stratified)
 
     current_time = time.strftime("%Y-%m-%d-%H-%M-%S", time.localtime())
     log_file = f"MATH_{current_time}.txt"
@@ -483,10 +504,11 @@ if __name__ == '__main__':
                         prompt_file=args.prompt_file,
                         item_ids=[item_id],
                         dataset=args.domain,
-                        split="test",
+                        split=test_split,
                         batch_id=0,
                         run_id=current_time,
                         request_timeout=args.request_timeout,
+                        inject_random_strategies=args.generate_predictor_data,
                     )
 
                 workflows = getattr(router, "last_compact_workflows", [])
@@ -579,7 +601,7 @@ if __name__ == '__main__':
                 csv_rows.append({
                     "run_id": current_time,
                     "dataset": args.domain,
-                    "split": "test",
+                    "split": test_split,
                     "batch_id": "",
                     "item_id": str(item_id),
                     "record_type": "episode",
@@ -593,13 +615,14 @@ if __name__ == '__main__':
                     "llm_elapsed_seconds": l_elapsed,
                     "arrival_rate": arrival_rate,
                     "arrival_pattern": args.arrival_pattern,
+                    "query": query,
                 })
                 # Step-level records with vLLM system metrics
                 for step in transitions:
                     csv_rows.append({
                         "run_id": current_time,
                         "dataset": args.domain,
-                        "split": "test",
+                        "split": test_split,
                         "batch_id": "",
                         "item_id": str(item_id),
                         "record_type": "step",
@@ -629,6 +652,11 @@ if __name__ == '__main__':
                         "llm_e2e_avg": step.get("llm_e2e_avg", 0.0),
                         "llm_queue_avg": step.get("llm_queue_avg", 0.0),
                         "llm_inference_avg": step.get("llm_inference_avg", 0.0),
+                        # Token counts and predictor training fields
+                        "prompt_tokens": step.get("prompt_tokens", 0),
+                        "completion_tokens": step.get("completion_tokens", 0),
+                        "strategy_name": step.get("strategy_name", "Concise"),
+                        "query": query,
                     })
                 quality_writer.append_rows(csv_rows)
             test_progress.log_final_summary()

@@ -125,7 +125,8 @@ class MasRouter(nn.Module):
                 split: Optional[str] = None,
                 batch_id: Optional[int] = None,
                 run_id: Optional[str] = None,
-                request_timeout: Optional[float] = None):
+                request_timeout: Optional[float] = None,
+                inject_random_strategies: bool = False):
         """
         queries:List[Dict[str, str]]: List of queries
         tasks:List[Dict[str, str]]: List of tasks
@@ -198,6 +199,8 @@ class MasRouter(nn.Module):
             zip(queries, selected_tasks, selected_llms, selected_collabs, selected_roles)
         ):
             kwargs = get_kwargs(collab["Name"], len(llms))
+            if inject_random_strategies:
+                kwargs["inject_random_strategies"] = True
             llm_names = [llm["Name"] for llm in llms]
             role_names = [role["Name"] for role in roles]
             item_id = str(item_ids[i]) if item_ids is not None and i < len(item_ids) else str(i)

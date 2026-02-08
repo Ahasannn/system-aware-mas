@@ -12,7 +12,10 @@ from MAR.Utils.telemetry import GraphTrace, NodeTiming, utc_now_iso, LLMUsageTra
 from MAR.Utils.utils import find_mode
 from MAR.Agent.agent_registry import AgentRegistry
 from MAR.SystemRouter.metrics_watcher import model_metrics
+from MAR.SystemRouter.prompt_strategies import PromptStrategy
 from MAR.LLM.gpt_chat import _is_non_retryable_server_error
+
+_STRATEGY_CHOICES = [s.value for s in PromptStrategy]
 
 class Graph(ABC):
     """
@@ -80,6 +83,8 @@ class Graph(ABC):
         self.potential_temporal_edges:List[List[str,str]] = []
         self.node_kwargs = node_kwargs if node_kwargs is not None else [{} for _ in agent_names]
         self.reasoning_name = reasoning_name
+        self.inject_random_strategies = kwargs.get("inject_random_strategies", False)
+        self._strategy_rng = np.random.default_rng(42) if self.inject_random_strategies else None
 
         self.init_nodes() # add nodes to the self.nodes
         self.init_potential_edges() # add potential edges to the self.potential_spatial/temporal_edges
@@ -325,6 +330,12 @@ class Graph(ABC):
 
                 def run_node(node_id: str) -> None:
                     node = self.nodes[node_id]
+
+                    # Inject random prompt strategy for predictor data generation
+                    if self.inject_random_strategies and hasattr(node, "set_strategy"):
+                        strategy = self._strategy_rng.choice(_STRATEGY_CHOICES)
+                        node.set_strategy(strategy)
+
                     ts_start = utc_now_iso()
                     start_perf = time.perf_counter()
                     usage_key = f"{self.id}:{round}:{node_id}"
@@ -390,6 +401,9 @@ class Graph(ABC):
                         transition["latency_seconds"] = duration_sec
                         transition["observed_ttft"] = observed_ttft
                         transition["observed_tpot"] = observed_tpot
+                        transition["prompt_tokens"] = int(usage.get("prompt_tokens", 0))
+                        transition["completion_tokens"] = int(usage.get("completion_tokens", 0))
+                        transition["strategy_name"] = getattr(node, "strategy_name", "")
                     if trace is not None:
                         output_text = ""
                         trace.record_node_event(
@@ -462,6 +476,10 @@ class Graph(ABC):
                 self.update_memory()
 
             self.connect_decision_node()
+            # Inject random strategy for decision node too
+            if self.inject_random_strategies and hasattr(self.decision_node, "set_strategy"):
+                strategy = self._strategy_rng.choice(_STRATEGY_CHOICES)
+                self.decision_node.set_strategy(strategy)
             ts_start = utc_now_iso()
             start_perf = time.perf_counter()
             decision_node_id = getattr(self.decision_node, "id", "")

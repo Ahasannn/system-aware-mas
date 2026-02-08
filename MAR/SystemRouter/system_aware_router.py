@@ -1,11 +1,12 @@
 import json
 import runpy
 from pathlib import Path
-from typing import Dict, List, Optional, Union
+from typing import Dict, List, Optional, Tuple, Union
 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from loguru import logger
 from sentence_transformers import SentenceTransformer
 
 from MAR.SystemRouter.metrics_watcher import model_metrics
@@ -61,11 +62,12 @@ class SystemAwareRouter(nn.Module):
         role_domain: str = "Code",
         embedding_dim: int = 384,
         hidden_dim: int = 128,
-        fixed_budget_sec: float = 60.0,
         lambda_init: float = 0.5,
         device: Optional[torch.device] = None,
         query_embeddings_csv: Optional[str] = None,
         role_embeddings_csv: Optional[str] = None,
+        latency_predictor_path: Optional[str] = None,
+        length_predictor_path: Optional[str] = None,
     ) -> None:
         super().__init__()
         self.device = device if device is not None else torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -85,17 +87,8 @@ class SystemAwareRouter(nn.Module):
         role_names = list(self.role_profiles.keys())
         self.role_sets = role_sets or _default_role_sets(role_names)
         self.role_set_names = ["-".join(role_set) for role_set in self.role_sets]
-        self.fixed_budget_sec = float(fixed_budget_sec)
 
-        self.system_metric_keys = [
-            "num_requests_running",
-            "num_requests_waiting",
-            "kv_cache_usage_perc",
-            "ttft_avg",
-            "itl_avg",
-            "e2e_avg",
-        ]
-        self.latency_dim = len(self.models) * len(self.system_metric_keys)  # system metrics per model
+        # Semantic encoder and offline embeddings
         self.encoder = SemanticEncoder(device=self.device)
         embeddings_dir = Path(__file__).resolve().parents[2] / "Datasets" / "embeddings"
         query_csv = query_embeddings_csv or str(embeddings_dir / "query_embeddings.csv")
@@ -111,6 +104,20 @@ class SystemAwareRouter(nn.Module):
                 f"{self.encoder.embedding_dim}. Use embedding_dim={self.encoder.embedding_dim}."
             )
         self.embedding_dim = self.encoder.embedding_dim
+
+        # Load predictors (required for system-aware routing)
+        self.latency_predictor: Optional[object] = None
+        self.length_predictor: Optional[object] = None
+        if latency_predictor_path and length_predictor_path:
+            self.latency_predictor, self.length_predictor = _load_predictors(
+                latency_predictor_path, length_predictor_path, self.encoder, self.device,
+            )
+            logger.info("[Router] Predictors loaded: latency={}, length={}", latency_predictor_path, length_predictor_path)
+        else:
+            logger.warning("[Router] No predictors loaded — system state will be zeros")
+
+        # System state: [L_hat, n_running, n_waiting] per model → 3 values per model
+        self.latency_dim = len(self.models) * 3
 
         # Planner policy over topology + role set
         self.planner_backbone = nn.Sequential(
@@ -247,25 +254,55 @@ class SystemAwareRouter(nn.Module):
             "value": value,
         }
 
-    def estimate_initial_budget(self, query: str) -> float:
-        """
-        Fixed latency budget placeholder (set to a high value for now).
-        """
-        return self.fixed_budget_sec
+    def get_system_state_vector(
+        self,
+        dtype: torch.dtype,
+        query_text: str = "",
+        role_name: str = "",
+    ) -> torch.Tensor:
+        """Build ``[L_hat_m, n_run_m, n_wait_m]`` per model.
 
-    def get_system_metrics(self) -> Dict[str, Dict[str, float]]:
-        return {model: dict(model_metrics.get(model, {})) for model in self.models}
-
-    def flatten_system_metrics(self, metrics: Dict[str, Dict[str, float]], dtype: torch.dtype) -> torch.Tensor:
+        ``L_hat_m = TTFT_hat + TPOT_hat * length_hat`` using the loaded
+        latency and length predictors.  If predictors are not loaded, all
+        predicted-latency slots are zero (queue metrics still populated).
+        """
         values: List[float] = []
-        for model in self.models:
-            snap = metrics.get(model, {})
-            for key in self.system_metric_keys:
-                values.append(float(snap.get(key, 0.0)))
-        return torch.tensor(values, device=self.device, dtype=dtype)
+        prompt_len = len(query_text.split()) * 1.3 if query_text else 0.0
 
-    def get_system_state_vector(self, dtype: torch.dtype) -> torch.Tensor:
-        return self.flatten_system_metrics(self.get_system_metrics(), dtype=dtype)
+        for model_name in self.models:
+            snap = model_metrics.get(model_name, {})
+            n_run = float(snap.get("num_requests_running", 0.0))
+            n_wait = float(snap.get("num_requests_waiting", 0.0))
+
+            l_hat = 0.0
+            if self.latency_predictor is not None and self.length_predictor is not None and query_text:
+                try:
+                    ttft_hat, tpot_hat = self.latency_predictor.predict_latency(
+                        prompt_len=prompt_len,
+                        waiting_queue=n_wait,
+                        running_queue=n_run,
+                        kv_cache_usage=float(snap.get("kv_cache_usage_perc", 0.0)),
+                        avg_tpot=float(snap.get("itl_avg", 0.0)),
+                        avg_ttft=float(snap.get("ttft_avg", 0.0)),
+                        avg_queue=float(snap.get("queue_avg", 0.0)),
+                        avg_inference=float(snap.get("inference_avg", 0.0)),
+                        model_name=model_name,
+                        role_name=role_name or "ProgrammingExpert",
+                        strategy_name="Concise",
+                    )
+                    length_hat = self.length_predictor.predict_length(
+                        query_text,
+                        model_name=model_name,
+                        role_name=role_name or "ProgrammingExpert",
+                        strategy_name="Concise",
+                    )
+                    l_hat = ttft_hat + tpot_hat * length_hat
+                except Exception as exc:
+                    logger.trace("[Router] Predictor error for {}: {}", model_name, exc)
+
+            values.extend([l_hat, n_run, n_wait])
+
+        return torch.tensor(values, device=self.device, dtype=dtype)
 
     def compute_executor_reward(
         self,
@@ -296,6 +333,32 @@ class SystemAwareRouter(nn.Module):
 
     def _to_tensor(self, value: Union[float, torch.Tensor]) -> torch.Tensor:
         return value if isinstance(value, torch.Tensor) else torch.tensor([value], device=self.device)
+
+
+def _load_predictors(
+    latency_path: str,
+    length_path: str,
+    encoder: "SemanticEncoder",
+    device: torch.device,
+) -> Tuple:
+    """Load latency and length predictor bundles from checkpoint files."""
+    from MAR.SystemRouter.latency_estimator import LatencyEstimatorBundle, load_latency_estimator
+    from MAR.SystemRouter.length_estimator import LengthEstimatorBundle, load_length_estimator
+
+    lat_path = Path(latency_path)
+    len_path = Path(length_path)
+    if not lat_path.is_file():
+        raise FileNotFoundError(f"Latency predictor checkpoint not found: {lat_path}")
+    if not len_path.is_file():
+        raise FileNotFoundError(f"Length predictor checkpoint not found: {len_path}")
+
+    lat_model, lat_meta, _ = load_latency_estimator(lat_path, device=device)
+    latency_bundle = LatencyEstimatorBundle(model=lat_model, metadata=lat_meta)
+
+    len_model, len_meta, _ = load_length_estimator(len_path, device=device)
+    length_bundle = LengthEstimatorBundle(model=len_model, metadata=len_meta, encoder=encoder)
+
+    return latency_bundle, length_bundle
 
 
 def _load_role_profiles(domain: str) -> Dict[str, Dict[str, object]]:

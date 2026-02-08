@@ -16,6 +16,7 @@ from MAR.Prompts.message_aggregation import message_aggregation,inner_test
 from MAR.Prompts.post_process import post_process
 from MAR.Prompts.output_format import output_format_prompt
 from MAR.Prompts.reasoning import reasoning_prompt
+from MAR.SystemRouter.prompt_strategies import get_strategy_prompt
 
 
 def limit_prompt_for_llm(llm_model_name: str, system_prompt: str, user_prompt: str) -> str:
@@ -176,6 +177,10 @@ class Agent(Node):
         self.last_ttft = 0.0
         self.last_tpot = 0.0
 
+        # Strategy injection (used only for predictor data generation)
+        self.strategy_name = ""
+        self.strategy_prompt = ""
+
         # Reflect
         if reason_name == "Reflection" and self.post_output_format == "None":
             self.post_output_format = self.output_format
@@ -188,10 +193,13 @@ class Agent(Node):
         format_prompt = output_format_prompt[self.output_format]
         reason_prompt = reasoning_prompt[self.reason]
 
-        system_prompt = f"{self.description}\n{reason_prompt}"
+        base_system = f"{self.description}\n{reason_prompt}"
         if self.latency_budget:
-            system_prompt += f"\nLatency budget: {self.latency_budget}. Work a bit faster and be concise."
-        system_prompt += f"\nFormat requirements that must be followed:\n{format_prompt}" if format_prompt else ""
+            base_system += f"\nLatency budget: {self.latency_budget}. Work a bit faster and be concise."
+        base_system += f"\nFormat requirements that must be followed:\n{format_prompt}" if format_prompt else ""
+        system_prompt = base_system
+        if self.strategy_prompt:
+            system_prompt = f"{self.strategy_prompt}\n{base_system}"
         user_prompt = f"{query}\n"
         spatial_section = (
             f"At the same time, other agents' outputs are as follows:\n\n{spatial_prompt}"
@@ -261,6 +269,11 @@ class Agent(Node):
             available,
         )
         return trimmed
+
+    def set_strategy(self, strategy: str) -> None:
+        """Set prompt strategy for predictor data generation."""
+        self.strategy_name = strategy
+        self.strategy_prompt = get_strategy_prompt(strategy) if strategy else ""
 
     def set_llm(self, llm_name: str) -> None:
         if not llm_name:
@@ -464,6 +477,14 @@ class FinalRefer(Node):
         # Timing metrics for telemetry
         self.last_ttft = 0.0
         self.last_tpot = 0.0
+        # Strategy injection (used only for predictor data generation)
+        self.strategy_name = ""
+        self.strategy_prompt = ""
+
+    def set_strategy(self, strategy: str) -> None:
+        """Set prompt strategy for predictor data generation."""
+        self.strategy_name = strategy
+        self.strategy_prompt = get_strategy_prompt(strategy) if strategy else ""
 
     def _limit_prompt(self, system_prompt: str, user_prompt: str) -> str:
         return limit_prompt_for_llm(self.llm.model_name, system_prompt, user_prompt)
@@ -551,8 +572,10 @@ class FinalRefer(Node):
         cost_count(prompt_text, response, self.llm.model_name)
         return response
 
-    def _process_inputs(self, raw_inputs, spatial_info, temporal_info, **kwargs):  
+    def _process_inputs(self, raw_inputs, spatial_info, temporal_info, **kwargs):
         system_prompt = f"{self.prompt_file['system']}"
+        if self.strategy_prompt:
+            system_prompt = f"{self.strategy_prompt}\n{system_prompt}"
         spatial_str = ""
         for id, info in spatial_info.items():
             spatial_str += id + ": " + info['output'] + "\n\n"

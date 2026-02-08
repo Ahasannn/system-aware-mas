@@ -152,10 +152,12 @@ class SystemRouterEnv:
         quality_fn: Optional[
             Callable[[str, Optional[List[str]], Optional[Any]], Tuple[Union[float, torch.Tensor], Dict[str, object]]]
         ] = None,
+        budget_total: float = 60.0,
     ) -> Dict[str, Union[str, float, torch.Tensor, Dict[str, float], List[dict]]]:
         """
         Run one hierarchical episode: planner picks topology/roles, executor runs each role.
         Tests are required unless a quality_fn is supplied.
+        ``budget_total`` is the per-query latency budget in seconds.
         """
         scorer = quality_fn or self.quality_fn
         if not scorer and not tests:
@@ -168,8 +170,6 @@ class SystemRouterEnv:
                 query_id=query_id,
                 dataset_name=dataset_name,
             )
-
-        budget_total = self.router.estimate_initial_budget(query)
 
         role_set = plan["role_set"]
         graph_kwargs = get_kwargs(plan["topology_name"], len(role_set))

@@ -94,6 +94,8 @@ class SystemRouterGraph(Graph):
                 "total_tokens": total_tokens,
             }
 
+        query_text = inputs.get("query", "")
+
         def select_action_single(node_id: str, round_idx: int, level: int, path_latency: float) -> None:
             nonlocal step_counter
             node = self.nodes[node_id]
@@ -104,7 +106,11 @@ class SystemRouterGraph(Graph):
                     role_embedding = router.encode_role(role_name)
                     state_vector = system_state_vector
                     if state_vector is None:
-                        state_vector = router.get_system_state_vector(query_embedding.dtype)
+                        state_vector = router.get_system_state_vector(
+                            query_embedding.dtype,
+                            query_text=query_text,
+                            role_name=role_name,
+                        )
                     exec_state = router.assemble_executor_state(
                         query_embedding, role_embedding, budget_remaining, state_vector
                     )
@@ -113,7 +119,11 @@ class SystemRouterGraph(Graph):
                 role_embedding = router.encode_role(role_name)
                 state_vector = system_state_vector
                 if state_vector is None:
-                    state_vector = router.get_system_state_vector(query_embedding.dtype)
+                    state_vector = router.get_system_state_vector(
+                        query_embedding.dtype,
+                        query_text=query_text,
+                        role_name=role_name,
+                    )
                 exec_state = router.assemble_executor_state(
                     query_embedding, role_embedding, budget_remaining, state_vector
                 )

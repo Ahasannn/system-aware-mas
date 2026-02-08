@@ -38,6 +38,8 @@ def load_math_dataset(data_path: str, split: Union [Literal['train'], Literal['t
                     with open(json_file, "r", encoding="utf-8") as f:
                         data = json.load(f)
                         data['category'] = category_name  # Add category info
+                        fname = os.path.splitext(os.path.basename(json_file))[0]
+                        data.setdefault('id', f"{category_name}/{fname}")
                         category_items.append(data)
                 category_data[category_name] = category_items
                 total_count += len(category_items)
@@ -71,10 +73,13 @@ def load_math_dataset(data_path: str, split: Union [Literal['train'], Literal['t
         total_data = []
         for category_path in category_paths:
             if os.path.isdir(category_path):
+                category_name = os.path.basename(category_path)
                 json_files = glob.glob(os.path.join(category_path, "*.json"))
                 for json_file in json_files:
                     with open(json_file, "r", encoding="utf-8") as f:
                         data = json.load(f)
+                        fname = os.path.splitext(os.path.basename(json_file))[0]
+                        data.setdefault('id', f"{category_name}/{fname}")
                         total_data.append(data)
         print("Total number of questions: ", len(total_data))
         rng = np.random.default_rng(888)

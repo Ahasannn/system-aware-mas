@@ -1,0 +1,27 @@
+{
+  "math": {
+    "train_limit": 519,
+    "arrival_rates": [10, 50, 100, 200],
+    "arrival_pattern": "poisson"
+  },
+  "mbpp": {
+    "train_limit": 374,
+    "arrival_rates": [2, 5, 100, 200, 300],
+    "arrival_pattern": "poisson"
+  },
+  "gsm8k": {
+    "train_limit": 500,
+    "arrival_rates": [2, 5, 100, 200, 300],
+    "arrival_pattern": "poisson"
+  },
+  "humaneval": {
+    "train_limit": 33,
+    "arrival_rates": [2, 5, 100, 200, 300],
+    "arrival_pattern": "poisson"
+  },
+  "mmlu": {
+    "train_limit": 500,
+    "arrival_rates": [2, 5, 100, 200, 300],
+    "arrival_pattern": "poisson"
+  }
+}

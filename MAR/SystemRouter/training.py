@@ -10,6 +10,7 @@ import torch
 
 from MAR.Utils.log import ProgressTracker
 
+from MAR.SystemRouter.budget_provider import BudgetProvider
 from MAR.SystemRouter.datasets import SystemRouterSample, available_datasets, get_dataset_adapter
 from MAR.SystemRouter.env import SystemRouterEnv
 from MAR.SystemRouter.system_aware_router import SystemAwareRouter
@@ -200,6 +201,24 @@ def _build_arg_parser(default_dataset: str) -> argparse.ArgumentParser:
     )
     parser.add_argument("--telemetry-csv", type=str, default="", help="CSV path for per-episode telemetry.")
     parser.add_argument("--run-id", type=str, default="", help="Run id for telemetry/checkpoints.")
+    parser.add_argument(
+        "--latency-predictor",
+        type=str,
+        default="",
+        help="Path to latency predictor checkpoint (required for predicted-latency state).",
+    )
+    parser.add_argument(
+        "--length-predictor",
+        type=str,
+        default="",
+        help="Path to length predictor checkpoint (required for predicted-latency state).",
+    )
+    parser.add_argument(
+        "--budget-csv",
+        type=str,
+        default="",
+        help="Path to baseline CSV with per-query latency budgets.",
+    )
     return parser
 
 
@@ -228,7 +247,13 @@ def main(default_dataset: str = "mbpp") -> None:
     role_domain = args.role_domain.strip() or adapter.role_domain
     prompt_file = args.prompt_file.strip() or adapter.prompt_file
 
-    router = SystemAwareRouter(role_domain=role_domain)
+    latency_predictor_path = args.latency_predictor.strip() or None
+    length_predictor_path = args.length_predictor.strip() or None
+    router = SystemAwareRouter(
+        role_domain=role_domain,
+        latency_predictor_path=latency_predictor_path,
+        length_predictor_path=length_predictor_path,
+    )
     env = SystemRouterEnv(
         router=router,
         max_tokens=args.max_tokens,
@@ -237,6 +262,12 @@ def main(default_dataset: str = "mbpp") -> None:
         quality_fn=adapter.score_response,
     )
     trainer = SystemRouterTrainer(router)
+
+    budget_csv_path = args.budget_csv.strip() or None
+    budget_provider: Optional[BudgetProvider] = None
+    if budget_csv_path:
+        budget_provider = BudgetProvider(budget_csv_path)
+        logger.info("Budget provider loaded with rates: {}", budget_provider.arrival_rates)
 
     checkpoint_path = args.checkpoint_path.strip() or ""
     resume_checkpoint = args.resume_checkpoint
@@ -407,6 +438,11 @@ def main(default_dataset: str = "mbpp") -> None:
                     models_used = [step.get("model", "") for step in episode["executor_transitions"] if step.get("model")]
                     progress.update(success=True, models=models_used)
 
+            def _get_budget(sample: SystemRouterSample) -> float:
+                if budget_provider is not None:
+                    return budget_provider.get_budget(str(sample.item_id), arrival_rate)
+                return 60.0
+
             if use_shooter:
                 pattern = RequestPattern(
                     pattern=arrival_pattern,
@@ -434,6 +470,7 @@ def main(default_dataset: str = "mbpp") -> None:
                             query_id=sample.item_id,
                             dataset_name=adapter.dataset_name,
                             sample=sample,
+                            budget_total=_get_budget(sample),
                         )
 
                 def _handle_result(res: RequestResult) -> None:
@@ -463,6 +500,7 @@ def main(default_dataset: str = "mbpp") -> None:
                             query_id=sample.item_id,
                             dataset_name=adapter.dataset_name,
                             sample=sample,
+                            budget_total=_get_budget(sample),
                         )
                     except Exception as exc:
                         logger.warning("Episode {} failed: {}", sample_idx, exc)
@@ -503,6 +541,13 @@ def main(default_dataset: str = "mbpp") -> None:
 
     if data:
         sample = data[0]
+        final_budget = 60.0
+        if budget_provider is not None:
+            last_rate = sweep_rates[-1] if sweep_rates else 0.0
+            try:
+                final_budget = budget_provider.get_budget(str(sample.item_id), last_rate)
+            except KeyError:
+                final_budget = 60.0
         try:
             result = env.step(
                 query=sample.query,
@@ -512,6 +557,7 @@ def main(default_dataset: str = "mbpp") -> None:
                 query_id=sample.item_id,
                 dataset_name=adapter.dataset_name,
                 sample=sample,
+                budget_total=final_budget,
             )
         except Exception as exc:
             logger.warning("final_sample_failed error={}", exc)
