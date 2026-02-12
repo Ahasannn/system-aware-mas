@@ -136,6 +136,21 @@ class CollabDeterminer(nn.Module):
         collab_embedding = collab_z[selected_index]
         return selected_index, log_probs, collab_embedding, vae_loss
 
+    def evaluate(self, collabs: torch.Tensor, contexts: torch.Tensor, chosen_idx: int):
+        """Re-run forward pass and evaluate log_prob of a given action index."""
+        collab_hat, collab_z, collab_mu, collab_logvar = self.collab_encoder(collabs)
+        collab_z = F.normalize(collab_z, p=2, dim=1)
+        context_hat, context_z, context_mu, context_logvar = self.context_encoder(contexts)
+        context_z = F.normalize(context_z, p=2, dim=1)
+
+        scores = torch.softmax(torch.matmul(context_z, collab_z.T) / self.temp, dim=1)
+        vae_loss = (vae_loss_function(collab_hat, collabs, collab_mu, collab_logvar)
+                    + vae_loss_function(context_hat, contexts, context_mu, context_logvar))
+
+        log_prob = torch.log(scores[0, chosen_idx]).unsqueeze(0).unsqueeze(0)
+        collab_embedding = collab_z[chosen_idx].unsqueeze(0)
+        return log_prob, collab_embedding, vae_loss
+
 
 class NumDeterminer(nn.Module):
     def __init__(self, input_dim: int = 384, hidden_dim: int = 64, max_agent: int = 6, device=None):
@@ -196,6 +211,37 @@ class RoleAllocation(nn.Module):
 
         summary_role = torch.cat(summary_role_list, dim=0)
         return selected_roles_idx, log_probs, summary_role, vae_loss / len(roles_list)
+
+    def evaluate(
+        self,
+        roles_list: List[torch.Tensor],
+        contexts: torch.Tensor,
+        agent_num_int: torch.Tensor,
+        given_role_indices: List[List[int]],
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
+        """Re-run forward pass and evaluate log_prob of given role indices."""
+        log_probs = torch.zeros([contexts.size(0), 1], device=self.device)
+
+        for i, roles in enumerate(roles_list):
+            role_hat, role_z, role_mu, role_log_var = self.role_encoder(roles)
+            role_embedding = F.normalize(role_z, p=2, dim=1)
+            cur_vae_loss = vae_loss_function(role_hat, roles, role_mu, role_log_var)
+            vae_loss = cur_vae_loss if i == 0 else vae_loss + cur_vae_loss
+
+            current_role_embedding = self.init_role_embedding
+            history_role_embedding = self.init_role_embedding
+
+            for j in range(agent_num_int[i]):
+                history_role_embedding = history_role_embedding + current_role_embedding
+                history_role_embedding = F.layer_norm(history_role_embedding, history_role_embedding.shape[1:])
+                ctx = self.context_encoder(torch.cat([contexts[i].unsqueeze(0), history_role_embedding], dim=1))
+                ctx = F.normalize(ctx, p=2, dim=1)
+                scores = torch.softmax(torch.matmul(ctx, role_embedding.T) / self.temp, dim=1)
+                selected_index = given_role_indices[i][j]
+                log_probs[i][0] = log_probs[i][0] + torch.log(scores[0, selected_index])
+                current_role_embedding = role_embedding[selected_index].unsqueeze(0)
+
+        return log_probs, vae_loss / len(roles_list)
 
 
 # ---------------------------------------------------------------------------
@@ -433,22 +479,38 @@ class InfraMindRouter(nn.Module):
             self._cached_collabs_emb = self.encoder(collab_texts).to(self.device)
 
     def _encode_roles(self) -> Tuple[Dict, Dict]:
-        """Load role JSON files and compute text embeddings (same as MAS encoder_roles)."""
+        """Load role JSON files and compute text embeddings.
+
+        IMPORTANT: Only loads roles from self.role_domain to prevent
+        cross-domain contamination during role selection.
+        """
         task_role_database: Dict[str, List[Dict]] = {}
         task_role_emb: Dict[str, torch.Tensor] = {}
         roles_root = Path(__file__).resolve().parents[1] / "Roles"
-        for task_dir in sorted(roles_root.iterdir()):
-            if not task_dir.is_dir() or task_dir.name == "FinalNode":
-                continue
-            task_role_database[task_dir.name] = []
-            texts: List[str] = []
-            for role_file in sorted(task_dir.glob("*.json")):
-                with role_file.open("r", encoding="utf-8") as f:
-                    profile = json.load(f)
-                task_role_database[task_dir.name].append(profile)
-                texts.append(json.dumps(profile))
-            if texts:
-                task_role_emb[task_dir.name] = self.encoder(texts).to(self.device)
+
+        # Only load roles from the specified domain
+        task_dir = roles_root / self.role_domain
+        if not task_dir.is_dir():
+            raise RuntimeError(f"Role domain directory not found: {task_dir}")
+
+        task_role_database[self.role_domain] = []
+        texts: List[str] = []
+        for role_file in sorted(task_dir.glob("*.json")):
+            with role_file.open("r", encoding="utf-8") as f:
+                profile = json.load(f)
+            task_role_database[self.role_domain].append(profile)
+            texts.append(json.dumps(profile))
+
+        if texts:
+            task_role_emb[self.role_domain] = self.encoder(texts).to(self.device)
+        else:
+            raise RuntimeError(f"No role profiles found in {task_dir}")
+
+        logger.info(
+            "[Router] Loaded {} roles from {} domain only",
+            len(task_role_database[self.role_domain]),
+            self.role_domain,
+        )
         return task_role_database, task_role_emb
 
     def plan_graph(
@@ -479,15 +541,12 @@ class InfraMindRouter(nn.Module):
         budget_tensor = torch.tensor([[budget_total]], device=self.device, dtype=query_emb_batch.dtype)
         conditioned_emb = self.budget_conditioner(query_emb_batch, budget_tensor)  # (1, 384)
 
-        # 3. Task classification (bypassed via given_task for known domains)
-        task_idx_override = _DOMAIN_TASK_INDEX.get(self.role_domain)
+        # 3. Task classification (always use router's domain, not classifier output)
+        # The task classifier is still called for loss computation during training
         _, task_probs, query_context = self.task_classifier(conditioned_emb, self._cached_tasks_emb)
-        if task_idx_override is not None:
-            selected_task = self._tasks_profile[task_idx_override]
-        else:
-            selected_task = self._tasks_profile[int(torch.argmax(task_probs, dim=1)[0].item())]
 
-        task_name = selected_task["Name"]
+        # Always use the router's configured domain (not task classifier output)
+        task_name = self.role_domain
         tasks_role_emb_list = [self._task_role_emb[task_name]]
         tasks_role_list = [self._task_role_database[task_name]]
 
@@ -526,6 +585,66 @@ class InfraMindRouter(nn.Module):
             "planner_log_probs": planner_log_probs,
             "planner_vae_loss": planner_vae_loss,
             "budget_total": budget_total,
+            "chosen_role_indices": [int(idx.item()) for idx in selected_roles_idx[0]],
+        }
+
+    # ------------------------------------------------------------------
+    # Planner: re-evaluate given actions (for training)
+    # ------------------------------------------------------------------
+
+    def evaluate_plan(
+        self,
+        query_embedding: torch.Tensor,
+        budget_total: float,
+        chosen_topology_idx: int,
+        chosen_role_indices: List[int],
+        agent_count: int,
+    ) -> Dict[str, torch.Tensor]:
+        """Re-compute planner forward pass, evaluate log_prob of given actions.
+
+        Creates a fresh computation graph referencing current weights so that
+        ``loss.backward()`` never encounters stale weight versions.
+        """
+        self._ensure_planner_caches()
+
+        query_emb_batch = query_embedding.unsqueeze(0)
+        budget_tensor = torch.tensor(
+            [[budget_total]], device=self.device, dtype=query_emb_batch.dtype,
+        )
+        conditioned_emb = self.budget_conditioner(query_emb_batch, budget_tensor)
+
+        # Task classification
+        _, task_probs, query_context = self.task_classifier(
+            conditioned_emb, self._cached_tasks_emb,
+        )
+
+        # Collab — evaluate given topology index
+        collab_log_prob, collab_embedding, collab_vae_loss = (
+            self.collab_determiner.evaluate(
+                self._cached_collabs_emb, conditioned_emb, chosen_topology_idx,
+            )
+        )
+
+        # Num determiner (deterministic, only need vae_loss)
+        _, _, num_vae_loss = self.num_determiner(conditioned_emb)
+
+        # Role allocation — evaluate given role indices
+        task_name = self.role_domain
+        tasks_role_emb_list = [self._task_role_emb[task_name]]
+        planner_context = torch.cat([query_context, collab_embedding], dim=-1)
+        agent_num_int_tensor = torch.tensor([agent_count], device=self.device)
+        role_log_prob, role_vae_loss = self.role_allocation.evaluate(
+            tasks_role_emb_list, planner_context, agent_num_int_tensor,
+            [chosen_role_indices],
+        )
+
+        planner_log_probs = collab_log_prob + role_log_prob
+        planner_vae_loss = collab_vae_loss + num_vae_loss + role_vae_loss
+
+        return {
+            "planner_log_probs": planner_log_probs,
+            "planner_vae_loss": planner_vae_loss,
+            "task_probs": task_probs,
         }
 
     # ------------------------------------------------------------------
@@ -613,7 +732,7 @@ class InfraMindRouter(nn.Module):
         """CMDP reward per executor step: quality − λ · (step_latency / budget_remaining)."""
         quality = self._to_tensor(semantic_quality)
         lat = self._to_tensor(latency).to(self.device)
-        bud = self._to_tensor(budget_remaining).clamp_min(1e-3)
+        bud = self._to_tensor(budget_remaining).clamp_min(1.0)
         return quality - F.softplus(self.lagrange_multiplier) * (lat / bud)
 
     # ------------------------------------------------------------------
@@ -628,6 +747,44 @@ class InfraMindRouter(nn.Module):
 
     def _to_tensor(self, value: Union[float, torch.Tensor]) -> torch.Tensor:
         return value if isinstance(value, torch.Tensor) else torch.tensor([value], device=self.device)
+
+    def load_mas_checkpoint(self, path: str) -> None:
+        """Load pretrained MAS Router weights into shared planner modules.
+
+        Transfers: task_classifier, collab_determiner, num_determiner,
+        role_allocation.  Skips MAS-only modules (text_encoder, llm_router)
+        and leaves InfraMind-only modules (budget_conditioner, executor, etc.)
+        at their random init.
+        """
+        _SHARED_PREFIXES = (
+            "task_classifier.",
+            "collab_determiner.",
+            "num_determiner.",
+            "role_allocation.",
+        )
+        mas_state = torch.load(path, map_location=self.device)
+        # MAS saves plain state_dict via torch.save(router.state_dict(), ...)
+        if "router_state_dict" in mas_state:
+            mas_state = mas_state["router_state_dict"]
+
+        matched, skipped = 0, 0
+        own_state = self.state_dict()
+        for key, value in mas_state.items():
+            if not key.startswith(_SHARED_PREFIXES):
+                skipped += 1
+                continue
+            if key in own_state and own_state[key].shape == value.shape:
+                own_state[key] = value
+                matched += 1
+            else:
+                logger.warning("[MAS→InfraMind] Shape mismatch or missing key: {}", key)
+                skipped += 1
+
+        self.load_state_dict(own_state)
+        logger.info(
+            "[MAS→InfraMind] Loaded {} params from MAS checkpoint, skipped {} (path={})",
+            matched, skipped, path,
+        )
 
     def planner_parameters(self):
         """All parameters that belong to the planner (for optimizer)."""

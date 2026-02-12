@@ -127,7 +127,9 @@ class InfraMindEnv:
         )
         self.metrics_url_map = metrics_url_map or _build_metrics_url_map(router.models)
         self.metrics_thread = None
-        if self.metrics_url_map:
+        if self.dry_run:
+            logger.info("[Env] Dry-run mode: skipping metrics watcher (will use mock system state)")
+        elif self.metrics_url_map:
             logger.info("[Env] Starting metrics watcher with {} models", len(self.metrics_url_map))
             self.metrics_thread = start_metrics_watcher(self.metrics_url_map, interval=metrics_interval)
         else:
@@ -225,15 +227,19 @@ class InfraMindEnv:
             transition["quality"] = float(quality.detach().cpu().item())
             transition["workflow_latency_seconds"] = workflow_latency
 
-        # Planner transition — includes log_probs and vae_loss for training
+        # Planner transition — store detached inputs + action indices for
+        # re-computation at training time (avoids stale computation graphs).
         planner_transition = {
-            "planner_log_probs": plan["planner_log_probs"],
-            "planner_vae_loss": plan["planner_vae_loss"],
-            "task_probs": plan["task_probs"],
+            # Detached inputs for evaluate_plan() re-computation
+            "query_embedding": plan["query_embedding"].detach(),
+            "budget_total": budget_total,
+            "chosen_topology_idx": plan["topology_index"],
+            "chosen_role_indices": plan["chosen_role_indices"],
+            "agent_count": plan["agent_count"],
+            # Reward signals (scalars, no graph needed)
             "quality": float(quality.detach().cpu().item()),
             "is_solved": quality_meta.get("is_solved"),
             "workflow_latency_seconds": workflow_latency,
-            "budget_total": budget_total,
         }
 
         return {

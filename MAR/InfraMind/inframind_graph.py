@@ -156,9 +156,18 @@ class InfraMindGraph(Graph):
             successors = "|".join(
                 s.id for s in node.spatial_successors if s.id in self.nodes
             )
+            # Detach tensors to prevent "backward through graph twice" errors
+            exec_action_detached = {
+                k: v.detach() if isinstance(v, torch.Tensor) else v
+                for k, v in exec_action.items()
+            }
+            exec_state_detached = {
+                k: v.detach() if isinstance(v, torch.Tensor) else v
+                for k, v in exec_state.items()
+            }
             transitions[(round_idx, node_id)] = {
-                "state": exec_state,
-                "action": exec_action,
+                "state": exec_state_detached,
+                "action": exec_action_detached,
                 "role": role_name,
                 "step_index": step_counter,
                 "round_index": round_idx,

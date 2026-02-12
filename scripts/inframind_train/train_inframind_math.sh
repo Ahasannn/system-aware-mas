@@ -21,26 +21,30 @@ ARRIVAL_RATES_CSV=$(python3 -c "import json; print(','.join(str(r) for r in json
 # ===== Paths =====
 BLUE_STORAGE="${BLUE_STORAGE:-/blue/qi855292.ucf/ah872032.ucf}"
 
+# Pretrained MAS Router checkpoint (transfer learning for planner)
+MAS_CHECKPOINT="${BLUE_STORAGE}/checkpoints/mas_router/mas_math_train_519_cost100.pth"
+
 # Predictor checkpoints
 LATENCY_PREDICTOR="${BLUE_STORAGE}/checkpoints/predictors/latency_estimator.pth"
 LENGTH_PREDICTOR="${BLUE_STORAGE}/checkpoints/predictors/length_estimator.pth"
 
 # Budget sweep values (seconds) — sweep through fixed budgets instead of per-query CSV
-# Aligned with test configuration for optimal performance
-BUDGET_SWEEP="20,40,60,100,150"
+# 3 budgets: tight, medium, generous
+BUDGET_SWEEP="20,60,150"
+
+# Override arrival rates for training (3 rates: low, medium, high)
+# Full config has 6 rates which is too slow; can expand after validation
+ARRIVAL_RATES_CSV="10,100,200"
 
 # Dataset
 MATH_DATASET_ROOT="${MATH_DATASET_ROOT:-${BLUE_STORAGE}/datasets/MATH}"
 
-# Checkpoint (single path, progressively improved across configs)
+# Checkpoint directory (filename auto-includes run_id with SLURM_JOB_ID)
 CHECKPOINT_DIR="${BLUE_STORAGE}/checkpoints/inframind"
 mkdir -p "${CHECKPOINT_DIR}"
-CHECKPOINT_PATH="${CHECKPOINT_DIR}/inframind_math.pt"
 
-# Telemetry
-TELEMETRY_DIR="logs/inframind_training/math"
-mkdir -p "${TELEMETRY_DIR}"
-TELEMETRY_CSV="${TELEMETRY_DIR}/inframind_train_math.csv"
+# To resume from a previous run, set this to the checkpoint path:
+RESUME_CHECKPOINT="/blue/qi855292.ucf/ah872032.ucf/checkpoints/inframind/inframind_math_20260212_161547_job24816311.pt"
 
 # ===== Validation =====
 for f in "$LATENCY_PREDICTOR" "$LENGTH_PREDICTOR"; do
@@ -65,15 +69,16 @@ echo "Train limit: ${TRAIN_LIMIT}"
 echo "Arrival rates: ${ARRIVAL_RATES_CSV}"
 echo "Arrival pattern: ${ARRIVAL_PATTERN}"
 echo "Budget sweep: ${BUDGET_SWEEP}"
+echo "MAS checkpoint: ${MAS_CHECKPOINT}"
+echo "Checkpoint dir: ${CHECKPOINT_DIR}"
 echo "========================================="
 echo ""
 
 # ===== Training =====
-CMD="python -m MAR.InfraMind.training \
-  --dataset math \
+CMD="python Experiments/train_inframind_math.py \
   --dataset-root ${MATH_DATASET_ROOT} \
   --limit ${TRAIN_LIMIT} \
-  --epochs 1 \
+  --epochs 3 \
   --max-tokens 4096 \
   --arrival-rates ${ARRIVAL_RATES_CSV} \
   --arrival-pattern ${ARRIVAL_PATTERN} \
@@ -81,14 +86,21 @@ CMD="python -m MAR.InfraMind.training \
   --concurrency 1000 \
   --latency-predictor ${LATENCY_PREDICTOR} \
   --length-predictor ${LENGTH_PREDICTOR} \
-  --checkpoint-path ${CHECKPOINT_PATH} \
-  --checkpoint-every 50 \
-  --telemetry-csv ${TELEMETRY_CSV}"
+  --checkpoint-dir ${CHECKPOINT_DIR} \
+  --checkpoint-every 50"
 
-# Resume from existing checkpoint if present
-if [[ -f "${CHECKPOINT_PATH}" ]]; then
-    echo "Resuming from checkpoint: ${CHECKPOINT_PATH}"
-    CMD="${CMD} --resume-checkpoint"
+# Load pretrained MAS planner weights (transfer learning)
+if [[ -f "${MAS_CHECKPOINT}" ]]; then
+    echo "Loading MAS planner weights: ${MAS_CHECKPOINT}"
+    CMD="${CMD} --mas-checkpoint ${MAS_CHECKPOINT}"
+fi
+
+# Resume from a previous InfraMind checkpoint if specified
+if [[ -n "${RESUME_CHECKPOINT}" && -f "${RESUME_CHECKPOINT}" ]]; then
+    echo "Resuming from checkpoint: ${RESUME_CHECKPOINT}"
+    CMD="${CMD} --checkpoint-path ${RESUME_CHECKPOINT} --resume-checkpoint"
+elif [[ -n "${RESUME_CHECKPOINT}" ]]; then
+    echo "WARNING: Resume checkpoint not found: ${RESUME_CHECKPOINT}"
 fi
 
 echo "Command: ${CMD}"

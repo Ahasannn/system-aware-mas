@@ -8,7 +8,9 @@ Planner training (MAS-style REINFORCE):
 Executor training (CMDP Actor-Critic):
     reward = quality - λ · (step_latency / budget_remaining)
     loss = actor_loss + value_coef * value_loss - entropy_coef * entropy
-    λ updated via signed Lagrangian dual ascent.
+
+Lambda update (episode-level Lagrangian dual ascent):
+    λ ← λ + lr · clamp(mean(workflow_lat / budget_total) - 1, -1, 2)
 """
 
 from typing import Dict, Iterable, List
@@ -28,10 +30,9 @@ class InfraMindTrainer:
         lr_planner: float = 3e-4,
         lr_executor: float = 3e-4,
         latency_rate: float = 1.0,
-        executor_entropy_coef: float = 0.02,
+        executor_entropy_coef: float = 0.10,
         value_coef: float = 0.5,
-        lambda_lr: float = 1e-3,
-        mini_batch_size: int = 32,
+        lambda_lr: float = 5e-3,
         max_grad_norm: float = 1.0,
     ) -> None:
         self.router = router
@@ -39,7 +40,6 @@ class InfraMindTrainer:
         self.executor_entropy_coef = executor_entropy_coef
         self.value_coef = value_coef
         self.lambda_lr = lambda_lr
-        self.mini_batch_size = mini_batch_size
         self.max_grad_norm = max_grad_norm
 
         # Planner optimizer (MAS modules + BCFM)
@@ -67,9 +67,37 @@ class InfraMindTrainer:
 
         if planner_batch:
             metrics.update(self._train_planner(planner_batch, task_label))
+            metrics.update(self._update_lambda(planner_batch))
         if executor_batch:
             metrics.update(self._train_executor(executor_batch))
         return metrics
+
+    # ------------------------------------------------------------------
+    # Lambda update (episode-level Lagrange dual ascent)
+    # ------------------------------------------------------------------
+
+    def _update_lambda(self, planner_batch: List[dict]) -> Dict[str, float]:
+        """Episode-level constraint update: lambda += lr * (mean(workflow_lat / budget_total) - 1).
+
+        Uses planner transitions which carry episode-level workflow_latency_seconds
+        and budget_total, not per-step values.  The constraint gap is clamped to
+        [-1, 2] to prevent single-batch explosion.
+        """
+        with torch.no_grad():
+            lats = [float(item.get("workflow_latency_seconds", 0.0)) for item in planner_batch]
+            buds = [float(item.get("budget_total", 60.0)) for item in planner_batch]
+            ratios = [l / max(b, 1.0) for l, b in zip(lats, buds)]
+            cost_ratio = sum(ratios) / len(ratios)
+            constraint_gap = cost_ratio - 1.0
+            # Clamp gap to prevent single-batch explosion
+            constraint_gap = max(-1.0, min(constraint_gap, 2.0))
+            self.router.lagrange_multiplier.add_(self.lambda_lr * constraint_gap)
+            self.router.lagrange_multiplier.clamp_(-5.0, 3.0)  # softplus(3) ≈ 3.05
+        return {
+            "cost_ratio": cost_ratio,
+            "constraint_gap": constraint_gap,
+            "lambda": float(F.softplus(self.router.lagrange_multiplier).item()),
+        }
 
     # ------------------------------------------------------------------
     # Planner training (MAS-style REINFORCE)
@@ -81,6 +109,9 @@ class InfraMindTrainer:
             utility = is_solved - (latency / budget) * latency_rate
             answer_loss = -log_prob * utility
             loss = answer_loss + task_loss + vae_loss * 0.001
+
+        Re-computes the planner forward pass with current weights via
+        ``router.evaluate_plan()`` to avoid stale computation graphs.
         """
         device = self.router.device
 
@@ -93,9 +124,18 @@ class InfraMindTrainer:
         tasks_y = torch.tensor([task_label], device=device)
 
         for item in batch:
-            log_prob = item["planner_log_probs"]          # (1, 1) — differentiable
-            vae_loss = item["planner_vae_loss"]            # scalar — differentiable
-            task_probs = item["task_probs"]                # (1, N_tasks) — differentiable
+            # Re-compute forward pass with CURRENT weights (fresh graph)
+            fresh = self.router.evaluate_plan(
+                query_embedding=item["query_embedding"],
+                budget_total=item["budget_total"],
+                chosen_topology_idx=item["chosen_topology_idx"],
+                chosen_role_indices=item["chosen_role_indices"],
+                agent_count=item["agent_count"],
+            )
+            log_prob = fresh["planner_log_probs"]   # (1, 1) — fresh graph
+            vae_loss = fresh["planner_vae_loss"]     # scalar — fresh graph
+            task_probs = fresh["task_probs"]          # (1, N_tasks) — fresh graph
+
             is_solved = float(item.get("is_solved", 0))
             latency = float(item["workflow_latency_seconds"])
             budget = float(item["budget_total"])
@@ -155,70 +195,44 @@ class InfraMindTrainer:
         )
         qualities = torch.tensor([item["quality"] for item in batch], device=device)
         latencies = torch.tensor(
-            [float(item.get("workflow_latency_seconds", item.get("latency_seconds", 0.0)))
-             for item in batch], device=device,
+            [float(item.get("latency_seconds", 0.0)) for item in batch],
+            device=device,
         )
         budgets = torch.tensor([item["budget_remaining"] for item in batch], device=device)
-        rewards = self.router.compute_executor_reward(qualities, latencies, budgets)
+        rewards = self.router.compute_executor_reward(qualities, latencies, budgets).detach()
 
-        # Mini-batch SGD
-        n = len(batch)
-        bs = min(self.mini_batch_size, n)
-        total_actor_loss = 0.0
-        total_value_loss = 0.0
-        total_loss = 0.0
-        num_updates = 0
+        # Forward pass on full batch
+        action_out = self.router.get_executor_action(states, deterministic=False)
+        log_model = torch.log(action_out["model_probs"] + 1e-8)
+        log_strategy = torch.log(action_out["strategy_probs"] + 1e-8)
+        chosen_log_prob = (
+            log_model.gather(1, model_idx.unsqueeze(-1)).squeeze(-1)
+            + log_strategy.gather(1, strategy_idx.unsqueeze(-1)).squeeze(-1)
+        )
+        entropy = (
+            -(action_out["model_probs"] * torch.log(action_out["model_probs"] + 1e-8)).sum(dim=1)
+            + -(action_out["strategy_probs"] * torch.log(action_out["strategy_probs"] + 1e-8)).sum(dim=1)
+        )
+        advantage = rewards - action_out["value"].detach()
+        # Normalize advantages to zero mean, unit variance — standard practice
+        # that prevents absolute reward magnitude from dominating the gradient.
+        if advantage.numel() > 1:
+            advantage = (advantage - advantage.mean()) / (advantage.std() + 1e-8)
+        actor_loss = -(chosen_log_prob * advantage).mean()
+        value_loss = F.mse_loss(action_out["value"], rewards)
+        loss = actor_loss + self.value_coef * value_loss - self.executor_entropy_coef * entropy.mean()
 
-        indices = torch.randperm(n, device=device)
-        for start in range(0, n, bs):
-            mb_idx = indices[start: start + bs]
-            mb_states = states[mb_idx]
-            mb_model = model_idx[mb_idx]
-            mb_strat = strategy_idx[mb_idx]
-            mb_rewards = rewards[mb_idx]
+        self.executor_optimizer.zero_grad()
+        loss.backward()
+        torch.nn.utils.clip_grad_norm_(
+            self.router.executor_parameters(), self.max_grad_norm,
+        )
+        self.executor_optimizer.step()
 
-            action_out = self.router.get_executor_action(mb_states, deterministic=False)
-            log_model = torch.log(action_out["model_probs"] + 1e-8)
-            log_strategy = torch.log(action_out["strategy_probs"] + 1e-8)
-            chosen_log_prob = (
-                log_model.gather(1, mb_model.unsqueeze(-1)).squeeze(-1)
-                + log_strategy.gather(1, mb_strat.unsqueeze(-1)).squeeze(-1)
-            )
-            entropy = (
-                -(action_out["model_probs"] * torch.log(action_out["model_probs"] + 1e-8)).sum(dim=1)
-                + -(action_out["strategy_probs"] * torch.log(action_out["strategy_probs"] + 1e-8)).sum(dim=1)
-            )
-            advantage = mb_rewards - action_out["value"].detach()
-            actor_loss = -(chosen_log_prob * advantage).mean()
-            value_loss = F.mse_loss(action_out["value"], mb_rewards)
-            loss = actor_loss + self.value_coef * value_loss - self.executor_entropy_coef * entropy.mean()
-
-            self.executor_optimizer.zero_grad()
-            loss.backward()
-            torch.nn.utils.clip_grad_norm_(
-                self.router.executor_parameters(), self.max_grad_norm,
-            )
-            self.executor_optimizer.step()
-
-            total_actor_loss += actor_loss.item()
-            total_value_loss += value_loss.item()
-            total_loss += loss.item()
-            num_updates += 1
-
-        # Signed Lagrange dual update
-        with torch.no_grad():
-            cost_ratio = (latencies / budgets.clamp_min(1e-3)).mean()
-            constraint_gap = cost_ratio - 1.0
-            self.router.lagrange_multiplier.add_(self.lambda_lr * constraint_gap)
-            self.router.lagrange_multiplier.clamp_(-5.0, 10.0)
-
-        denom = max(num_updates, 1)
         return {
-            "executor_loss": total_loss / denom,
-            "actor_loss": total_actor_loss / denom,
-            "value_loss": total_value_loss / denom,
-            "constraint_gap": float(constraint_gap.item()),
-            "cost_ratio": float(cost_ratio.item()),
+            "executor_loss": loss.item(),
+            "actor_loss": actor_loss.item(),
+            "value_loss": value_loss.item(),
             "lambda": float(F.softplus(self.router.lagrange_multiplier).item()),
             "executor_entropy": float(entropy.mean().detach().cpu().item()),
         }

@@ -102,13 +102,18 @@ class InfraMindAgent(Node):
             user_prompt += f"\n\nIn the last round of dialogue, other agents' outputs were:\n\n{temporal_prompt}"
 
         trimmed_user_prompt = limit_prompt_for_llm(self.llm.model_name, system_prompt, user_prompt)
+        # Only log if significant trimming occurred (>20% reduction)
         if trimmed_user_prompt != user_prompt:
-            logger.debug(
-                "Trimmed user prompt for %s from %d to %d tokens",
-                self.llm.model_name,
-                cal_token(self.llm.model_name, user_prompt),
-                cal_token(self.llm.model_name, trimmed_user_prompt),
-            )
+            orig_tokens = cal_token(self.llm.model_name, user_prompt)
+            new_tokens = cal_token(self.llm.model_name, trimmed_user_prompt)
+            if orig_tokens > 0 and (orig_tokens - new_tokens) / orig_tokens > 0.2:
+                logger.warning(
+                    "Significant prompt trimming for {}: {} → {} tokens ({:.1f}% reduction)",
+                    self.llm.model_name.split("/")[-1],
+                    orig_tokens,
+                    new_tokens,
+                    (orig_tokens - new_tokens) / orig_tokens * 100,
+                )
         user_prompt = trimmed_user_prompt
 
         self.prompt_base = f"{base_system}\n\n{user_prompt}".strip()
@@ -236,15 +241,7 @@ class InfraMindAgent(Node):
                 f"{query}\nThe initial thinking information is:\n{response} \n "
                 "Please refer to the new format requirements when replying."
             )
-            trimmed_user_prompt = limit_prompt_for_llm(self.llm.model_name, system_prompt, user_prompt)
-            if trimmed_user_prompt != user_prompt:
-                logger.debug(
-                    "Trimmed post-format user prompt for %s from %d to %d tokens",
-                    self.llm.model_name,
-                    cal_token(self.llm.model_name, user_prompt),
-                    cal_token(self.llm.model_name, trimmed_user_prompt),
-                )
-            user_prompt = trimmed_user_prompt
+            user_prompt = limit_prompt_for_llm(self.llm.model_name, system_prompt, user_prompt)
             prompt = [{"role": "system", "content": system_prompt}, {"role": "user", "content": user_prompt}]
             response = self._call_llm_stream(prompt, max_tokens=max_tokens, request_timeout=request_timeout)
             logger.trace(f"post system prompt:\n {system_prompt}")

@@ -28,9 +28,6 @@ INFRAMIND_CSV_FIELDS: Sequence[str] = (
     "dataset",
     "split",
     "item_id",
-    "query",
-    "tests_json",
-    "answer",
     "topology",
     "role_set",
     "budget_total",
@@ -39,12 +36,8 @@ INFRAMIND_CSV_FIELDS: Sequence[str] = (
     "quality",
     "quality_is_solved",
     "quality_feedback",
-    "quality_pred",
-    "quality_gold",
     "workflow_latency_seconds",
     "llm_elapsed_seconds",
-    "final_response",
-    "code_response",
     "prompt_tokens",
     "completion_tokens",
     "total_tokens",
@@ -56,8 +49,6 @@ INFRAMIND_CSV_FIELDS: Sequence[str] = (
     "budget_remaining",
     "round_index",
     "dep_level",
-    "spatial_predecessors",
-    "spatial_successors",
     "observed_ttft",
     "observed_tpot",
     "llm_running",
@@ -68,13 +59,13 @@ INFRAMIND_CSV_FIELDS: Sequence[str] = (
     "llm_e2e_avg",
     "llm_queue_avg",
     "llm_inference_avg",
-    "prompt_base",
-    "response_final",
 )
 
 
 def _default_run_id() -> str:
-    return time.strftime("%Y%m%d_%H%M%S")
+    ts = time.strftime("%Y%m%d_%H%M%S")
+    job_id = os.environ.get("SLURM_JOB_ID", "")
+    return f"{ts}_job{job_id}" if job_id else ts
 
 
 def _save_checkpoint(
@@ -92,9 +83,9 @@ def _save_checkpoint(
         path = checkpoint_path
         os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
     else:
-        # No explicit path — use dataset-specific checkpoint, overwrite each epoch
+        # No explicit path — include run_id so each job gets its own checkpoint
         os.makedirs(checkpoint_dir, exist_ok=True)
-        path = os.path.join(checkpoint_dir, f"inframind_{dataset_name}.pt")
+        path = os.path.join(checkpoint_dir, f"inframind_{dataset_name}_{run_id}.pt")
     payload = {
         "epoch": epoch,
         "run_id": run_id,
@@ -191,6 +182,7 @@ def _build_arg_parser(default_dataset: str) -> argparse.ArgumentParser:
     )
     parser.add_argument("--arrival-patterns", type=str, default="", help="Comma-separated arrival patterns to sweep.")
     parser.add_argument("--concurrency", type=int, default=1, help="Max concurrent in-flight requests.")
+    parser.add_argument("--training-batch-size", type=int, default=64, help="Number of episodes to accumulate before each training update.")
     parser.add_argument("--burst-duration", type=float, default=3.0, help="Burst duration for microburst.")
     parser.add_argument("--spike-intensity", type=float, default=10.0, help="Spike intensity for microburst.")
     parser.add_argument("--spike-period", type=float, default=20.0, help="Spike period for microburst.")
@@ -230,6 +222,14 @@ def _build_arg_parser(default_dataset: str) -> argparse.ArgumentParser:
         help="Comma-separated budget values (seconds) to sweep, e.g. '10,20,30,50,100,200'. "
         "When set, each (arrival_rate, pattern, budget) combo becomes a separate sweep config. "
         "Overrides --budget-csv.",
+    )
+    parser.add_argument(
+        "--mas-checkpoint",
+        type=str,
+        default="",
+        help="Path to pretrained MAS Router checkpoint. Loads shared planner "
+        "modules (task_classifier, collab/num/role) as initialization, "
+        "skips MAS-only modules (llm_router). BCFM and executor start fresh.",
     )
     parser.add_argument(
         "--skip-training",
@@ -300,17 +300,26 @@ def main(default_dataset: str = "mbpp") -> None:
 
     checkpoint_path = args.checkpoint_path.strip() or ""
     resume_checkpoint = args.resume_checkpoint
-    if checkpoint_path and os.path.isfile(checkpoint_path):
-        if resume_checkpoint or args.checkpoint_path:
-            payload = torch.load(checkpoint_path, map_location=router.device)
-            router.load_state_dict(payload.get("router_state_dict", payload))
-            planner_state = payload.get("planner_optimizer_state_dict")
-            executor_state = payload.get("executor_optimizer_state_dict")
-            if planner_state:
-                trainer.planner_optimizer.load_state_dict(planner_state)
-            if executor_state:
-                trainer.executor_optimizer.load_state_dict(executor_state)
-            logger.info("Resumed checkpoint from {}", checkpoint_path)
+    if resume_checkpoint and checkpoint_path and os.path.isfile(checkpoint_path):
+        # Resume from a previous InfraMind checkpoint (full state: router + optimizers)
+        payload = torch.load(checkpoint_path, map_location=router.device)
+        router.load_state_dict(payload.get("router_state_dict", payload))
+        planner_state = payload.get("planner_optimizer_state_dict")
+        executor_state = payload.get("executor_optimizer_state_dict")
+        if planner_state:
+            trainer.planner_optimizer.load_state_dict(planner_state)
+        if executor_state:
+            trainer.executor_optimizer.load_state_dict(executor_state)
+        logger.info("Resumed InfraMind checkpoint from {}", checkpoint_path)
+        # Clear so new saves go to a fresh file (with new job ID)
+        checkpoint_path = ""
+    else:
+        # Fresh training — load MAS planner weights as initialization
+        mas_checkpoint = args.mas_checkpoint.strip() if hasattr(args, "mas_checkpoint") else ""
+        if mas_checkpoint and os.path.isfile(mas_checkpoint):
+            router.load_mas_checkpoint(mas_checkpoint)
+        elif mas_checkpoint:
+            logger.warning("MAS checkpoint not found: {}", mas_checkpoint)
 
     run_id = args.run_id or _default_run_id()
     telemetry_path = args.telemetry_csv or os.path.join("logs", f"inframind_{adapter.dataset_name}_{run_id}.csv")
@@ -338,12 +347,17 @@ def main(default_dataset: str = "mbpp") -> None:
     episode_counter = 0
     last_checkpoint_episode = 0
     process_lock = threading.Lock()
+    training_lock = threading.Lock()
 
-    for sweep_idx, (arrival_rate, arrival_pattern, sweep_budget) in enumerate(sweep_configs):
-        for epoch in range(args.epochs):
+    for epoch in range(args.epochs):
+        random.shuffle(sweep_configs)
+        for sweep_idx, (arrival_rate, arrival_pattern, sweep_budget) in enumerate(sweep_configs):
             planner_transitions: List[Dict[str, Any]] = []
             executor_transitions: List[Dict[str, Any]] = []
             workflow_latencies: List[float] = []
+            workflow_qualities: List[float] = []  # Track quality separately
+            epoch_metrics: Dict[str, float] = {}
+            epoch_train_count: int = 0
             use_shooter = arrival_rate > 0.0 or args.concurrency > 1
 
             # Initialize progress tracker for this epoch
@@ -371,12 +385,34 @@ def main(default_dataset: str = "mbpp") -> None:
                     progress.update(success=False, models=None)
                     return
 
+                # Collect transitions under process_lock (fast)
+                planner_batch = None
+                executor_batch = None
                 with process_lock:
                     planner_transitions.append(episode["planner_transition"])
                     executor_transitions.extend(episode["executor_transitions"])
                     workflow_latencies.append(episode["workflow_latency_seconds"])
+                    workflow_qualities.append(episode.get("quality", 0.0))
 
                     episode_index = episode_counter
+
+                    # Snapshot batch if ready (copy + clear is fast)
+                    training_batch_size = args.training_batch_size
+                    if not args.skip_training and len(planner_transitions) >= training_batch_size:
+                        planner_batch = planner_transitions.copy()
+                        executor_batch = executor_transitions.copy()
+                        planner_transitions.clear()
+                        executor_transitions.clear()
+
+                # Train outside process_lock (doesn't block other episode processing)
+                if planner_batch is not None:
+                    with training_lock:
+                        nonlocal epoch_metrics, epoch_train_count
+                        batch_metrics = trainer.train_batch(planner_batch, executor_batch, task_label=task_label)
+                        epoch_metrics = batch_metrics
+                        epoch_train_count += 1
+
+                with process_lock:
                     episode_counter += 1
                     quality_pred = episode.get("quality_pred")
                     quality_gold = episode.get("quality_gold") or answer
@@ -389,9 +425,6 @@ def main(default_dataset: str = "mbpp") -> None:
                             "dataset": adapter.dataset_name,
                             "split": args.split,
                             "item_id": item_id,
-                            "query": query,
-                            "tests_json": tests if tests else "",
-                            "answer": answer,
                             "topology": episode["topology"],
                             "role_set": episode["role_set"],
                             "budget_total": episode["budget_total"],
@@ -400,12 +433,8 @@ def main(default_dataset: str = "mbpp") -> None:
                             "quality": episode["quality"],
                             "quality_is_solved": episode.get("quality_is_solved"),
                             "quality_feedback": episode.get("quality_feedback"),
-                            "quality_pred": quality_pred,
-                            "quality_gold": quality_gold,
                             "workflow_latency_seconds": episode["workflow_latency_seconds"],
                             "llm_elapsed_seconds": episode.get("llm_elapsed_seconds", 0.0),
-                            "final_response": episode["response"],
-                            "code_response": episode.get("code_response", ""),
                             "prompt_tokens": episode["token_counts"].get("prompt_tokens", 0),
                             "completion_tokens": episode["token_counts"].get("completion_tokens", 0),
                             "total_tokens": episode["token_counts"].get("total_tokens", 0),
@@ -423,9 +452,6 @@ def main(default_dataset: str = "mbpp") -> None:
                                 "dataset": adapter.dataset_name,
                                 "split": args.split,
                                 "item_id": item_id,
-                                "query": query,
-                                "tests_json": tests if tests else "",
-                                "answer": answer,
                                 "topology": episode["topology"],
                                 "role_set": episode["role_set"],
                                 "arrival_rate": arrival_rate,
@@ -439,10 +465,9 @@ def main(default_dataset: str = "mbpp") -> None:
                                 "strategy_name": step.get("strategy", ""),
                                 "latency_seconds": step.get("latency_seconds", 0.0),
                                 "budget_remaining": step.get("budget_remaining", 0.0),
+                                "budget_total": episode["budget_total"],
                                 "round_index": step.get("round_index", 0),
                                 "dep_level": step.get("dep_level", 0),
-                                "spatial_predecessors": step.get("spatial_predecessors", ""),
-                                "spatial_successors": step.get("spatial_successors", ""),
                                 "observed_ttft": step.get("observed_ttft", 0.0),
                                 "observed_tpot": step.get("observed_tpot", 0.0),
                                 "llm_running": step.get("llm_running", 0),
@@ -453,8 +478,6 @@ def main(default_dataset: str = "mbpp") -> None:
                                 "llm_e2e_avg": step.get("llm_e2e_avg", 0.0),
                                 "llm_queue_avg": step.get("llm_queue_avg", 0.0),
                                 "llm_inference_avg": step.get("llm_inference_avg", 0.0),
-                                "prompt_base": step.get("prompt_base", ""),
-                                "response_final": step.get("response", ""),
                                 "prompt_tokens": token_counts.get("prompt_tokens", 0),
                                 "completion_tokens": token_counts.get("completion_tokens", 0),
                                 "total_tokens": token_counts.get("total_tokens", 0),
@@ -476,9 +499,17 @@ def main(default_dataset: str = "mbpp") -> None:
                         logger.info("Saved checkpoint: {}", saved_path)
                         last_checkpoint_episode = episode_counter
 
-                    # Extract models used in this episode for statistics
+                    # Extract usage stats from this episode
                     models_used = [step.get("model", "") for step in episode["executor_transitions"] if step.get("model")]
-                    progress.update(success=True, models=models_used)
+                    strategies_used = [step.get("strategy", "") for step in episode["executor_transitions"] if step.get("strategy")]
+                    progress.update(
+                        success=True,
+                        models=models_used,
+                        topology=episode.get("topology", ""),
+                        strategies=strategies_used,
+                        latency=episode.get("workflow_latency_seconds", 0.0),
+                        quality=episode.get("quality", 0.0),
+                    )
 
             def _get_budget(sample: InfraMindSample) -> float:
                 if sweep_budget > 0.0:
@@ -505,7 +536,20 @@ def main(default_dataset: str = "mbpp") -> None:
                 )
 
                 def handler(sample: InfraMindSample) -> Dict[str, Any]:
-                    with torch.no_grad():
+                    # Only disable gradients during inference mode
+                    if args.skip_training:
+                        with torch.no_grad():
+                            return env.step(
+                                query=sample.query,
+                                tests=sample.tests,
+                                deterministic=args.deterministic,
+                                latency_seed=sample.query,
+                                query_id=sample.item_id,
+                                dataset_name=adapter.dataset_name,
+                                sample=sample,
+                                budget_total=_get_budget(sample),
+                            )
+                    else:
                         return env.step(
                             query=sample.query,
                             tests=sample.tests,
@@ -519,11 +563,11 @@ def main(default_dataset: str = "mbpp") -> None:
 
                 def _handle_result(res: RequestResult) -> None:
                     if not res.success:
-                        progress.update(success=False, models=None)
+                        progress.update(success=False)
                         return
                     sample = data[res.index]
                     if res.output is None:
-                        progress.update(success=False, models=None)
+                        progress.update(success=False)
                         return
                     process_episode(res.index, sample, res.output)
 
@@ -548,31 +592,37 @@ def main(default_dataset: str = "mbpp") -> None:
                         )
                     except Exception as exc:
                         logger.warning("Episode {} failed: {}", sample_idx, exc)
-                        progress.update(success=False, models=None)
+                        progress.update(success=False)
                         continue
                     process_episode(sample_idx, sample, episode)
 
             # Log final progress summary for this epoch
             progress.log_final_summary()
 
-            avg_quality = sum(t["quality"] for t in planner_transitions) / max(len(planner_transitions), 1)
-            avg_latency = sum(workflow_latencies) / max(len(workflow_latencies), 1)
+            # Train on any remaining transitions (last partial batch)
+            if not args.skip_training and (planner_transitions or executor_transitions):
+                remaining_metrics = trainer.train_batch(planner_transitions, executor_transitions, task_label=task_label)
+                epoch_metrics = remaining_metrics
+                epoch_train_count += 1
+
+            metrics = epoch_metrics
+
+            avg_quality = sum(workflow_qualities) / max(len(workflow_qualities), 1) if workflow_qualities else 0.0
+            avg_latency = sum(workflow_latencies) / max(len(workflow_latencies), 1) if workflow_latencies else 0.0
             budget_label = f"{sweep_budget:.0f}s" if sweep_budget > 0.0 else "csv/default"
 
             if args.skip_training:
                 logger.info(
-                    "epoch={} sweep={}/{} rate={} pattern={} budget={} [inference-only] avg_quality={:.4f} avg_latency={:.3f}s",
+                    "epoch={} sweep={}/{} rate={} pattern={} budget={} [inference-only] avg_latency={:.3f}s",
                     global_epoch,
                     sweep_idx + 1,
                     len(sweep_configs),
                     arrival_rate,
                     arrival_pattern,
                     budget_label,
-                    avg_quality,
                     avg_latency,
                 )
             else:
-                metrics = trainer.train_batch(planner_transitions, executor_transitions, task_label=task_label)
                 logger.info(
                     "epoch={} sweep={}/{} rate={} pattern={} budget={}"
                     " planner_loss={:.4f} utility={:.4f}"

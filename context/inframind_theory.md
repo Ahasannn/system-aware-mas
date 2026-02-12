@@ -88,13 +88,26 @@ At timestep $t=0$, the Planner observes the query **and** the total latency budg
 $$\pi_{\text{plan}}: \mathcal{S}_{\text{plan}} \rightarrow \Delta(\mathcal{T} \times \mathcal{R})$$
 
 **Planner Action Space:**
-$$a_{\text{plan}} = (\tau, \mathcal{R}) \in \mathcal{A}_{\text{plan}}$$
+$$a_{\text{plan}} = (\tau, K, \mathcal{R}) \in \mathcal{A}_{\text{plan}}$$
 
 where:
 - $\tau \in \mathcal{T} = \{\text{IO}, \text{CoT}, \text{Chain}, \text{FullConnected}, \text{Debate}, \text{Reflection}\}$
-- $\mathcal{R} \subseteq \mathcal{R}_{\text{all}}$ is the selected role set
+- $K \in \{1, \ldots, K_{\max}\}$ is the number of agents
+- $\mathcal{R} = (r_1, \ldots, r_K)$ is the ordered role assignment
 
-**Key insight:** The topology determines the **latency floor** — the minimum achievable latency regardless of model or strategy choices. A three-round debate has a fundamentally higher latency floor than a single-agent call. Without budget visibility, the planner may select topologies whose latency floor exceeds the budget, leaving the executor unable to compensate. By conditioning on the budget, the planner learns to select structurally appropriate topologies: simpler topologies under tight budgets, richer collaboration when time permits.
+The planner makes these decisions through a **sequential pipeline** of four specialized modules — TaskClassifier, CollabDeterminer, NumDeterminer, and RoleAllocation — each backed by Variational Autoencoders (VAEs) and cross-attention (GFusion) over learned embeddings of topologies, roles, and task descriptions. This architecture, inherited from the MasRouter framework, learns rich latent representations of the combinatorial relationships between query difficulty, collaboration patterns, and role compositions.
+
+**The gap in existing MAS planners** is that these modules operate on task semantics alone. They learn, for example, that competition-level algebra benefits from a three-agent debate, but they have no mechanism to consider whether a three-agent debate is *feasible* within the available time. A planner that assigns a Debate topology to a query with a 10-second budget has committed an irrecoverable error: the topology's sequential structure (its **latency floor**) guarantees a budget violation before the executor even begins.
+
+**Budget-Conditioned Feature Modulation (BCFM).** InfraMind bridges this gap through a FiLM conditioning layer that modulates the query embedding *before* it enters the planner pipeline. Rather than redesigning the planner architecture (which would discard proven task-routing knowledge), BCFM transforms what the planner *perceives*:
+
+$$\tilde{\mathbf{e}}_q = \gamma(\beta) \odot \mathbf{e}_q + \beta(\beta)$$
+
+where $\gamma, \beta \in \mathbb{R}^{d_q}$ are scale and shift parameters produced by a budget-encoding MLP. This is Feature-wise Linear Modulation (FiLM), a well-established conditioning mechanism. The scale is initialized near identity ($\gamma \approx \mathbf{1}$) so that the modulation degrades gracefully to standard task-only behavior when budget information is uninformative.
+
+**How BCFM steers structural decisions without modifying the planner.** Under tight budgets, BCFM learns to shift the query embedding toward regions of the latent space associated with simpler problems — causing the downstream CollabDeterminer to favor IO or CoT topologies, and the NumDeterminer to output fewer agents. Under generous budgets, the embedding is shifted toward the complex-problem region, enabling richer collaboration. The planner's internal modules remain architecturally identical to MasRouter; what changes is the input distribution they operate on.
+
+**Transfer learning from pretrained MAS planners.** Because the planner modules share identical architectures with MasRouter, InfraMind initializes them from a pretrained MAS checkpoint. This transfers task-routing knowledge — which topologies and role combinations work for which problem types — without requiring InfraMind to re-learn it from scratch. The BCFM layer and executor are initialized randomly. End-to-end fine-tuning then adapts the planner from the MAS reward signal (token cost) to InfraMind's reward signal (latency/budget ratio), while preserving the task knowledge encoded in the VAE latent spaces.
 
 ### 2.2 Domain-Specific Role Sets
 
@@ -141,17 +154,20 @@ where:
 
 ### 3.1 Planner State
 
-The Planner observes the query embedding concatenated with the per-query latency budget:
+The Planner operates on a budget-conditioned query embedding produced by BCFM:
 
-$$s_{\text{plan}} = \left[ \mathbf{e}_q \,\|\, \beta_i \right] \in \mathbb{R}^{d_q + 1}$$
+$$s_{\text{plan}} = \tilde{\mathbf{e}}_q = \text{BCFM}(\mathbf{e}_q, \beta_i) \in \mathbb{R}^{d_q}$$
 
 where:
-- $\mathbf{e}_q = \text{Encoder}(q)$ is the query embedding from a pre-trained encoder
+- $\mathbf{e}_q = \text{Encoder}(q) \in \mathbb{R}^{d_q}$ is the query embedding from a pre-trained sentence encoder
 - $\beta_i$ is the per-query latency budget in seconds
+- $\text{BCFM}(\mathbf{e}_q, \beta_i) = \gamma(\beta_i) \odot \mathbf{e}_q + \beta(\beta_i)$ applies FiLM conditioning
 
-The planner backbone includes LayerNorm, which handles the raw-seconds scale internally.
+The budget-conditioned embedding $\tilde{\mathbf{e}}_q$ then flows through the sequential planner pipeline: TaskClassifier → CollabDeterminer → NumDeterminer → RoleAllocation. Each module operates on $\tilde{\mathbf{e}}_q$ (or context vectors derived from it) without any architectural modification — the budget signal enters entirely through BCFM's input modulation.
 
-**Why budget, not system state?** The planner's job is *structural*: deciding how much collaboration a query needs. This depends on query difficulty and available time, not on per-model queue depths. System state changes between the planner's decision and agent execution; the executor, which runs per-node in real time, is the right level for infrastructure adaptation. Keeping the planner state lean ($d_q + 1$ dimensions) ensures the budget signal is not diluted by system noise and trains efficiently.
+**Why budget modulation, not budget concatenation?** Concatenating the budget as an extra dimension ($[\mathbf{e}_q \| \beta_i] \in \mathbb{R}^{d_q+1}$) would require changing the input dimensions of all downstream modules, breaking compatibility with pretrained MAS weights. FiLM modulation preserves the embedding dimensionality ($\mathbb{R}^{d_q}$), enabling direct weight transfer from MAS while still providing the budget signal through a multiplicative pathway that the planner learns to interpret.
+
+**Why budget, not system state?** The planner's job is *structural*: deciding how much collaboration a query needs. This depends on query difficulty and available time, not on per-model queue depths. System state changes between the planner's decision and agent execution; the executor, which runs per-node in real time, is the right level for infrastructure adaptation. Keeping the planner's budget interface minimal (a single scalar processed through BCFM) ensures the budget signal is not diluted by system noise.
 
 ### 3.2 Executor State
 
@@ -242,13 +258,53 @@ Output: {L_hat(m,sigma)}_{m in M, sigma in Sigma} (complete latency map)
 
 ### 5.1 Planner Network Architecture
 
-$$\pi_{\text{plan}}(a_{\text{plan}} | s_{\text{plan}}; \theta_{\text{plan}}) = \text{Softmax}\left( \text{MLP}_{\text{plan}}([\mathbf{e}_q \,\|\, \beta_i]) \right)$$
+The planner is a **sequential decision pipeline** of four VAE-based modules, preceded by Budget-Conditioned Feature Modulation. Each module makes one decision, and its output conditions the next module's input. All modules use learned latent spaces with temperature-scaled stochastic sampling for exploration.
 
-The planner uses separate heads for topology and role set selection with a shared backbone:
+**Step 0 — Budget Conditioning (BCFM):**
 
-$$\mathbf{h}_{\text{plan}} = \text{Backbone}_{\text{plan}}([\mathbf{e}_q \,\|\, \beta_i])$$
-$$\pi_{\tau}(\cdot) = \text{Softmax}(\text{Head}_{\tau}(\mathbf{h}_{\text{plan}}))$$
-$$\pi_{\mathcal{R}}(\cdot) = \text{Softmax}(\text{Head}_{\mathcal{R}}(\mathbf{h}_{\text{plan}}))$$
+$$\mathbf{h}_\beta = \text{MLP}_\beta(\beta_i) \in \mathbb{R}^{d_h}$$
+$$\gamma = 1 + W_\gamma \mathbf{h}_\beta, \quad \beta = W_\beta \mathbf{h}_\beta$$
+$$\tilde{\mathbf{e}}_q = \gamma \odot \mathbf{e}_q + \beta$$
+
+The scale is centered at identity ($\gamma \approx 1$) to preserve pretrained representations at initialization.
+
+**Step 1 — Task Classification:**
+
+$$\mathbf{z}_q = \text{VAE}_q(\tilde{\mathbf{e}}_q), \quad \mathbf{z}_t = \text{VAE}_t(\mathbf{e}_{\text{tasks}})$$
+$$\pi_{\text{task}} = \text{Softmax}\left(\frac{\mathbf{z}_q \cdot \mathbf{z}_t^\top}{\tau_{\text{task}}}\right)$$
+
+Produces the query context vector $\mathbf{c}_q = \text{Proj}(\tilde{\mathbf{e}}_q) \in \mathbb{R}^{d_h}$.
+
+**Step 2 — Collaboration / Topology Selection (CollabDeterminer):**
+
+$$\mathbf{z}_c = \text{VAE}_c(\mathbf{e}_{\text{collabs}}), \quad \mathbf{z}_{cq} = \text{VAE}_{cq}(\tilde{\mathbf{e}}_q)$$
+$$\pi_\tau = \text{Softmax}\left(\frac{\mathbf{z}_{cq} \cdot \mathbf{z}_c^\top}{\tau_{\text{collab}}}\right)$$
+$$\tau \sim \text{CDF-Sample}(\pi_\tau), \quad \log p_\tau = \log \pi_\tau[\tau]$$
+
+The selected topology's latent vector $\mathbf{z}_c[\tau]$ becomes the collaboration context for role allocation.
+
+**Step 3 — Agent Count (NumDeterminer):**
+
+$$\hat{\mathbf{e}}_q, \mathbf{z}_n, \mu_n, \sigma_n = \text{VAE}_n(\tilde{\mathbf{e}}_q)$$
+$$K = \text{clamp}\left(\text{round}\left(\text{sigmoid}(W_n \mathbf{z}_n) \cdot K_{\max}\right), 1, K_{\max}\right)$$
+
+**Step 4 — Sequential Role Allocation (RoleAllocation):**
+
+For each agent slot $j = 1, \ldots, K$, the module selects a role conditioned on the planner context and previously selected roles:
+
+$$\mathbf{c}_{\text{plan}} = [\mathbf{c}_q \,\|\, \mathbf{z}_c[\tau]] \in \mathbb{R}^{2d_h}$$
+$$\mathbf{z}_r = \text{VAE}_r(\mathbf{e}_{\text{roles}}), \quad \mathbf{h}_j = \text{GFusion}(\mathbf{c}_{\text{plan}}, \mathbf{h}_{j-1})$$
+$$\pi_{r_j} = \text{Softmax}\left(\frac{\mathbf{h}_j \cdot \mathbf{z}_r^\top}{\tau_{\text{role}}}\right)$$
+$$r_j \sim \text{CDF-Sample}(\pi_{r_j}), \quad \log p_{r_j} = \log \pi_{r_j}[r_j]$$
+
+where $\mathbf{h}_0$ is a learned initial embedding and $\mathbf{h}_j$ accumulates the history of selected roles via layer-normalized addition.
+
+**Combined planner log-probability and VAE loss:**
+
+$$\log \pi_{\text{plan}} = \log p_\tau + \sum_{j=1}^{K} \log p_{r_j}$$
+$$\mathcal{L}_{\text{VAE}} = \sum_{\text{module}} \left(\text{MSE}(\hat{x}, x) - \frac{1}{2}\text{KL}(q(z|x) \| p(z))\right)$$
+
+The VAE reconstruction losses regularize the latent spaces of all modules, preventing mode collapse in the learned embeddings.
 
 ### 5.2 Executor Network Architecture
 
@@ -364,12 +420,12 @@ The entropy bonus is added to the policy gradient objective:
 
 $$J(\theta) = \mathbb{E}_\pi[\tilde{R} \cdot \log \pi(a|s)] + \alpha_H \cdot \mathbb{E}[\mathcal{H}[\pi]]$$
 
-**Why strong entropy matters for InfraMind:** Unlike the baseline MasRouter which maintains exploration through stochastic temperature-based sampling over learned VAE embeddings, InfraMind's REINFORCE policy gradient can collapse to a deterministic mode when the reward signal is noisy or sparse. The entropy coefficient $\alpha_H$ must be large enough to counteract this collapse:
+**Why entropy regularization is critical for budget-aware training.** The planner inherits temperature-based stochastic sampling from the underlying VAE architecture, which provides baseline exploration over topologies and roles. However, the introduction of BCFM creates a new failure mode: the budget signal can dominate the modulated embedding, causing the planner to collapse to a single "safe" topology (e.g., always IO under tight budgets) regardless of task content. Explicit entropy regularization counteracts this by maintaining diversity across the budget-conditioned action distribution:
 
-- **Planner**: $\alpha_H^{\text{plan}} = 0.05$. The planner has 6 topologies and up to 12 role sets. Without strong entropy, it converges to a single topology within the first few gradient updates.
-- **Executor**: $\alpha_H^{\text{exec}} = 0.02$. The executor has 5 models and 3 strategies. Moderate entropy ensures it explores model/strategy combinations rather than fixating on the empirically lowest-latency option.
+- **Planner**: $\alpha_H^{\text{plan}} = 0.05$. Ensures the budget-conditioned planner explores across topologies rather than collapsing to the lowest-latency-floor option.
+- **Executor**: $\alpha_H^{\text{exec}} = 0.02$. The executor's infrastructure-aware state space is high-dimensional ($M(|\Sigma|+2)$ system features). Without entropy, it fixates on whichever model currently has the shortest queue, ignoring quality-latency tradeoffs.
 
-Entropy should be **annealed** over training: start high to explore, reduce as the policy matures.
+Entropy should be **annealed** over training: start high to explore the budget-topology landscape, reduce as the policy learns meaningful budget-conditioned preferences.
 
 ### 8.2 Planner Policy Gradient
 
@@ -416,47 +472,57 @@ This ensures the policy receives sufficient gradient updates to learn from the c
 ### 8.5 Complete Training Algorithm
 
 ```
-Initialize: theta_plan, theta_exec, lambda_tilde = 0.0
-            EMA baseline: G_bar_plan = 0.0, rho = 0.05
-            Entropy coefficients: alpha_H_plan = 0.05, alpha_H_exec = 0.02
+Phase 0 — Transfer Learning Initialization:
+  Load pretrained MAS planner checkpoint (task_classifier, collab_determiner,
+    num_determiner, role_allocation weights)
+  Initialize BCFM and executor networks randomly
+  Initialize: lambda_tilde = 0.0, G_bar_plan = 0.0
 
+Phase 1 — End-to-End CMDP Training:
 For each sweep config (arrival_rate, pattern, budget):
   For each epoch:
-    Collect N episodes:
+    Collect N episodes (concurrent, Poisson arrivals):
       For each episode i:
         1. Encode query: e_q = Encoder(q_i)
-        2. PLANNER: s_plan = [e_q || beta_i]
-           Sample (topology, role_set) ~ pi_plan(.|s_plan)
-        3. EXECUTOR: For each role r_k in role_set:
-           Build system state z_sys (action-conditional latency map)
+        2. PLANNER: e_tilde = BCFM(e_q, beta_i)    ← budget modulation
+           Sample (topology, roles, K) ~ pi_plan(.|e_tilde)
+           Store: detached e_q, beta_i, chosen action indices
+        3. EXECUTOR: For each role r_k:
+           Build action-conditional latency map z_sys
            s_exec = [e_q || e_r_k || b_rem || z_sys]
            Sample (model, strategy) ~ pi_exec(.|s_exec)
            Execute LLM call with EDF priority
-        4. Evaluate quality R_quality
-        5. Compute rewards:
-           R_plan = R_quality - lambda * C_workflow / beta
-           R_exec^(k) = R_quality - lambda * L_k / b_rem^(k)
+        4. Evaluate quality R_quality, observe C_workflow
 
-    Update policies (mini-batch SGD):
-      Shuffle planner transitions into mini-batches of size B
+    Train planner (mini-batch SGD, fresh forward passes):
+      Shuffle stored transitions into mini-batches of size B
       For each mini-batch:
-        Compute advantages: A = R - G_bar_plan
-        L_plan = -mean(log_prob * A) - alpha_H * entropy
+        Re-compute: pi_plan = evaluate_plan(e_q, beta, actions)
+          ← fresh graph through BCFM + VAE pipeline with current weights
+        Compute advantage: A = (R_quality - lambda * C/beta) - G_bar
+        L_plan = -mean(log_prob * A) + 0.001 * L_VAE - alpha_H * H[pi]
         Backprop with gradient clipping (max_norm=1.0)
+      Update EMA baseline: G_bar = (1-rho)*G_bar + rho*mean(R)
 
-      Update EMA baseline: G_bar_plan = (1-rho)*G_bar_plan + rho*mean(R_plan)
-
-      Shuffle executor transitions into mini-batches of size B
-      For each mini-batch:
-        Compute advantages: A = R - V(s)
+    Train executor (mini-batch actor-critic):
+      For each mini-batch of detached executor transitions:
+        A = (R_quality - lambda * L_k/b_rem) - V(s_exec)
         L_exec = actor_loss + 0.5*value_loss - alpha_H*entropy
         Backprop with gradient clipping (max_norm=1.0)
 
     Update Lagrange multiplier (SIGNED dual ascent):
-      constraint_gap = mean(C_workflow) / mean(beta) - 1.0
-      lambda_tilde += eta_lambda * constraint_gap
+      gap = mean(C_workflow) / mean(beta) - 1.0
+      lambda_tilde += eta_lambda * gap    ← gap is signed!
       lambda = softplus(lambda_tilde)
 ```
+
+**Key training details:**
+
+1. **Transfer learning initialization** (Phase 0): The planner's VAE modules start from pretrained MAS weights, providing task-routing knowledge. BCFM starts near-identity ($\gamma \approx 1$), so the planner initially behaves identically to the pretrained MAS planner. End-to-end fine-tuning then adapts the combined system from MAS's cost-per-token reward to InfraMind's latency-budget reward.
+
+2. **Fresh forward pass at training time**: Planner transitions store only detached inputs and chosen action indices. At training time, the planner re-evaluates these actions via a fresh forward pass through BCFM and the VAE pipeline using current weights. This is the standard RL "evaluate" pattern (as in PPO) and prevents stale computation graphs across optimizer steps.
+
+3. **Concurrent episode collection**: Episodes are collected under Poisson-distributed concurrent load, so the executor encounters realistic infrastructure contention (varying queue depths, cache pressure) during data collection — not simulated load.
 
 ---
 
@@ -519,22 +585,57 @@ The EDF priority creates a two-level scheduling hierarchy:
 
 ---
 
-## 12. Comparison with Baseline MasRouter
+## 12. InfraMind's Contributions Over Existing MAS Routing
 
-Understanding why the baseline MasRouter produces diverse, stable policies while InfraMind can collapse informs the design decisions above:
+InfraMind builds upon the MAS routing paradigm and introduces five key innovations that transform infrastructure-oblivious task routing into infrastructure-aware, budget-constrained orchestration:
 
-| Aspect | Baseline MasRouter | InfraMind CMDP |
-|--------|-------------------|----------------|
-| **Architecture** | VAE + cross-attention (GFusion) | MLP + softmax heads |
-| **Exploration** | Temperature-based stochastic sampling ($\tau=0.5-1.0$) | Entropy regularization ($\alpha_H$) |
-| **Topology selection** | Learned via cumulative softmax CDF sampling | Learned via categorical softmax + REINFORCE |
-| **Model selection** | Sequential per-agent with history accumulation | Independent per-agent via executor policy |
-| **Agent count** | Learned scalar (sigmoid + scaling) | Determined by role set selection |
-| **Reward** | `utility = is_solved - cost * cost_rate` (always-on cost) | `quality - lambda * latency/budget` (Lagrangian) |
-| **Training** | Per-batch SGD, multiple epochs | Per-epoch batch then mini-batch SGD |
-| **Infrastructure awareness** | None | Full (queue depth, latency predictions) |
+### 12.1 Budget-Conditioned Feature Modulation (BCFM)
 
-**Key stability insight:** The baseline's `cost * cost_rate` term is **always active** — every model selection incurs a proportional cost penalty that shapes the policy even when quality is high. This prevents collapse to a single expensive model. InfraMind's Lagrangian achieves the same effect through the proportional latency cost $C/\beta$ and the signed dual update, which together ensure the latency signal is always present and the multiplier reaches an equilibrium rather than growing without bound.
+**Problem:** Existing MAS planners select collaboration structures based solely on task semantics. They cannot distinguish between a 10-second budget and a 120-second budget for the same query, leading to structurally infeasible plans.
+
+**Our solution:** BCFM is a FiLM conditioning layer ($\tilde{\mathbf{e}}_q = \gamma(\beta) \odot \mathbf{e}_q + \beta(\beta)$) inserted before the planner pipeline. It modulates the query embedding based on the latency budget, steering structural decisions without modifying the planner's internal architecture. This design enables direct transfer learning from pretrained MAS checkpoints — the planner modules receive the same-dimensional input, but the input distribution is now budget-conditioned.
+
+### 12.2 Hierarchical CMDP with Structural-Resource Separation
+
+**Problem:** Jointly optimizing topology, roles, models, and strategies in a single policy creates a combinatorial action space that is intractable to explore.
+
+**Our solution:** A two-level hierarchy that separates concerns:
+- **Planner** (structural): Selects topology + roles + agent count based on query + budget. Operates once at $t=0$.
+- **Executor** (resource): Selects model + strategy per agent based on query + role + remaining budget + real-time system state. Operates at each node.
+
+Each level has its own policy, optimizer, and reward signal, reducing the effective action space from $|\mathcal{T}| \times |\mathcal{R}|^K \times |\mathcal{M}|^K \times |\Sigma|^K$ to $|\mathcal{T}| \times |\mathcal{R}|^K$ (planner) + $|\mathcal{M}| \times |\Sigma|$ per node (executor).
+
+### 12.3 Infrastructure-Aware Executor with Action-Conditional Latency Maps
+
+**Problem:** Existing MAS routers select models based on task-model affinity alone, ignoring real-time infrastructure state. Under concurrent load, this creates queue imbalance: preferred models accumulate deep queues while others sit idle.
+
+**Our solution:** The executor observes an **action-conditional latency map** — for every candidate (model, strategy) pair, it sees the predicted end-to-end latency under current infrastructure conditions:
+
+$$\mathbf{z}_m = [\hat{L}_{m,\sigma_1} \| \cdots \| \hat{L}_{m,\sigma_{|\Sigma|}} \| n_m^{\text{run}} \| n_m^{\text{wait}}]$$
+
+This gives the executor a complete "price list" of all possible actions, enabling it to trade off quality vs. latency in real time. Under high load, it routes to underutilized models; under low load, it invests in richer reasoning.
+
+### 12.4 Lagrangian Relaxation with Signed Dual Ascent
+
+**Problem:** Hard budget constraints produce zero gradient when satisfied, removing the incentive to differentiate between fast and slow actions that both meet the deadline.
+
+**Our solution:** Proportional latency cost ($C/\beta$, always active) combined with signed dual ascent on the Lagrange multiplier $\lambda$. The signed update is critical: when average latency is below budget, $\lambda$ **decreases**, relaxing latency pressure and allowing the policy to explore higher-quality but more expensive configurations. This produces an equilibrium where $\lambda$ oscillates around the constraint boundary rather than growing monotonically toward collapse.
+
+### 12.5 Deadline-Aware Serving via EDF Scheduling
+
+**Problem:** Standard FCFS scheduling at the serving layer is deadline-blind — a request with 2 seconds remaining waits behind a request with 60 seconds remaining, causing avoidable budget violations.
+
+**Our solution:** Each query's deadline ($D_i = t_i^{\text{arr}} + \beta_i$) is propagated to the vLLM serving layer as an EDF priority. Requests closer to their deadline are served first, reducing tail-latency violations at the infrastructure level. This creates a cooperative two-level scheduling hierarchy: the CMDP executor decides *which* model to use, and EDF scheduling decides *when* the request is processed.
+
+### 12.6 Summary of Innovations
+
+| Innovation | What It Addresses | Level |
+|-----------|-------------------|-------|
+| **BCFM** | Budget-blind structural planning | Planner input |
+| **Hierarchical CMDP** | Intractable joint action space | Architecture |
+| **Action-conditional latency map** | Infrastructure-oblivious model selection | Executor state |
+| **Signed dual ascent** | Lagrangian collapse / monotonic $\lambda$ growth | Training |
+| **EDF scheduling** | Deadline-blind serving | Infrastructure |
 
 ---
 
@@ -543,7 +644,7 @@ Understanding why the baseline MasRouter produces diverse, stable policies while
 | Component | Equation |
 |-----------|----------|
 | **Action-Conditional Latency** | $\hat{L}_{m,\sigma} = \hat{T}_{m,\sigma}^{\text{TTFT}} + \hat{T}_{m,\sigma}^{\text{TPOT}} \cdot \hat{N}_{m,\sigma}^{\text{out}}$ |
-| **Planner State** | $s_{\text{plan}} = [\mathbf{e}_q \| \beta_i]$ |
+| **BCFM (Planner State)** | $\tilde{\mathbf{e}}_q = \gamma(\beta_i) \odot \mathbf{e}_q + \beta(\beta_i)$ |
 | **Planner CMDP Reward** | $\tilde{R}_{\text{plan}} = R_{\text{quality}} - \lambda \cdot C_{\text{workflow}} / \beta$ |
 | **Executor State** | $s_{\text{exec}} = [\mathbf{e}_q \| \mathbf{e}_r \| b_{\text{rem}} \| \mathbf{z}_{\text{sys}}]$ |
 | **Executor CMDP Reward** | $\tilde{R}_{\text{exec}} = R_{\text{quality}} - \lambda \cdot L_k / b_{\text{rem}}$ |
@@ -564,6 +665,7 @@ Understanding why the baseline MasRouter produces diverse, stable policies while
 |--------|-------------|
 | $q$ | Input query |
 | $\mathbf{e}_q$ | Query embedding |
+| $\tilde{\mathbf{e}}_q$ | Budget-conditioned query embedding (BCFM output) |
 | $\mathcal{M}$ | Set of available LLMs |
 | $\mathcal{T}$ | Set of topologies |
 | $\mathcal{R}$ | Set of roles |
@@ -571,6 +673,7 @@ Understanding why the baseline MasRouter produces diverse, stable policies while
 | $\tau$ | Selected topology |
 | $m$ | Selected LLM |
 | $\sigma$ | Selected strategy |
+| $\gamma(\beta), \beta(\beta)$ | BCFM scale and shift parameters (FiLM) |
 | $\beta$ | Latency budget |
 | $b_{\text{rem}}$ | Remaining budget |
 | $\lambda$ | Lagrange multiplier |
