@@ -39,6 +39,7 @@ class LatencyEstimatorRecord:
     strategy_name: str
     ttft: float
     tpot: float
+    item_id: str = ""
 
 
 @dataclass(frozen=True)
@@ -48,6 +49,11 @@ class LatencyEstimatorMetadata:
     strategy_vocab: CategoricalVocab
     num_numerical_features: int
     feature_names: Tuple[str, ...] = DEFAULT_NUM_FEATURES
+    # Per-head normalization stats (computed on log1p targets from training set)
+    ttft_log_mean: float = 0.0
+    ttft_log_std: float = 1.0
+    tpot_log_mean: float = 0.0
+    tpot_log_std: float = 1.0
 
     def to_dict(self) -> Dict[str, object]:
         return {
@@ -56,6 +62,10 @@ class LatencyEstimatorMetadata:
             "strategy_vocab": self.strategy_vocab.to_dict(),
             "num_numerical_features": self.num_numerical_features,
             "feature_names": list(self.feature_names),
+            "ttft_log_mean": self.ttft_log_mean,
+            "ttft_log_std": self.ttft_log_std,
+            "tpot_log_mean": self.tpot_log_mean,
+            "tpot_log_std": self.tpot_log_std,
         }
 
     @classmethod
@@ -67,6 +77,10 @@ class LatencyEstimatorMetadata:
             strategy_vocab=CategoricalVocab.from_dict(data["strategy_vocab"]),
             num_numerical_features=int(data.get("num_numerical_features", len(feature_names))),
             feature_names=feature_names,
+            ttft_log_mean=float(data.get("ttft_log_mean", 0.0)),
+            ttft_log_std=float(data.get("ttft_log_std", 1.0)),
+            tpot_log_mean=float(data.get("tpot_log_mean", 0.0)),
+            tpot_log_std=float(data.get("tpot_log_std", 1.0)),
         )
 
 
@@ -75,10 +89,13 @@ class LatencyEstimatorDataset(Dataset):
         self,
         records: Sequence[LatencyEstimatorRecord],
         metadata: LatencyEstimatorMetadata,
+        *,
+        log_transform: bool = False,
     ) -> None:
         self.records = list(records)
         self.metadata = metadata
         self.num_features = metadata.num_numerical_features
+        self.log_transform = log_transform
 
         self.x_num = torch.tensor(
             [
@@ -108,8 +125,16 @@ class LatencyEstimatorDataset(Dataset):
             [metadata.model_vocab.encode(record.model_name) for record in self.records],
             dtype=torch.long,
         )
-        self.targets_ttft = torch.tensor([record.ttft for record in self.records], dtype=torch.float32)
-        self.targets_tpot = torch.tensor([record.tpot for record in self.records], dtype=torch.float32)
+
+        raw_ttft = torch.tensor([record.ttft for record in self.records], dtype=torch.float32)
+        raw_tpot = torch.tensor([record.tpot for record in self.records], dtype=torch.float32)
+
+        if log_transform:
+            self.targets_ttft = (torch.log1p(raw_ttft) - metadata.ttft_log_mean) / max(metadata.ttft_log_std, 1e-8)
+            self.targets_tpot = (torch.log1p(raw_tpot) - metadata.tpot_log_mean) / max(metadata.tpot_log_std, 1e-8)
+        else:
+            self.targets_ttft = raw_ttft
+            self.targets_tpot = raw_tpot
 
     def __len__(self) -> int:
         return len(self.records)
@@ -145,6 +170,7 @@ def load_latency_records_from_csv(
     model_field: str = "model_name",
     role_field: str = "role_name",
     strategy_field: str = "strategy_name",
+    item_id_field: str = "item_id",
     min_ttft: float = 1e-6,
     min_tpot: float = 1e-6,
 ) -> List[LatencyEstimatorRecord]:
@@ -200,6 +226,8 @@ def load_latency_records_from_csv(
             if ttft < min_ttft or tpot < min_tpot:
                 continue
 
+            item_id = _safe_str(row.get(item_id_field))
+
             records.append(
                 LatencyEstimatorRecord(
                     prompt_len=float(prompt_len),
@@ -215,6 +243,7 @@ def load_latency_records_from_csv(
                     strategy_name=strategy_name,
                     ttft=float(ttft),
                     tpot=float(tpot),
+                    item_id=item_id,
                 )
             )
     return records
@@ -225,16 +254,32 @@ def build_latency_estimator_metadata(
     *,
     feature_names: Sequence[str] = DEFAULT_NUM_FEATURES,
     unk_token: str = "<unk>",
+    compute_target_stats: bool = False,
 ) -> LatencyEstimatorMetadata:
     model_vocab = _build_vocab([record.model_name for record in records], unk_token=unk_token)
     role_vocab = _build_vocab([record.role_name for record in records], unk_token=unk_token)
     strategy_vocab = _build_vocab([record.strategy_name for record in records], unk_token=unk_token)
+
+    ttft_log_mean, ttft_log_std = 0.0, 1.0
+    tpot_log_mean, tpot_log_std = 0.0, 1.0
+    if compute_target_stats and len(records) > 0:
+        ttft_vals = torch.log1p(torch.tensor([r.ttft for r in records], dtype=torch.float32))
+        tpot_vals = torch.log1p(torch.tensor([r.tpot for r in records], dtype=torch.float32))
+        ttft_log_mean = float(ttft_vals.mean())
+        ttft_log_std = float(ttft_vals.std()) if len(records) > 1 else 1.0
+        tpot_log_mean = float(tpot_vals.mean())
+        tpot_log_std = float(tpot_vals.std()) if len(records) > 1 else 1.0
+
     return LatencyEstimatorMetadata(
         model_vocab=model_vocab,
         role_vocab=role_vocab,
         strategy_vocab=strategy_vocab,
         num_numerical_features=len(feature_names),
         feature_names=tuple(feature_names),
+        ttft_log_mean=ttft_log_mean,
+        ttft_log_std=ttft_log_std,
+        tpot_log_mean=tpot_log_mean,
+        tpot_log_std=tpot_log_std,
     )
 
 

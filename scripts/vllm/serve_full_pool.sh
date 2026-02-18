@@ -24,7 +24,7 @@ if [[ -n "${SLURM_JOB_ID:-}" ]]; then
     echo "[Setup] SLURM Job ID:            ${SLURM_JOB_ID} (isolated logs/PIDs)"
 else
     # Interactive/local run - use shared directory
-    LOG_DIR="${ROOT_DIR}/logs/vllm"
+    LOG_DIR="${ROOT_DIR}/logs/vllm/job_local"
 fi
 mkdir -p "${LOG_DIR}"
 
@@ -162,7 +162,7 @@ wait_for_health() {
   local pidfile="${LOG_DIR}/${name}.pid"
   local logfile="${LOG_DIR}/${name}.log"
 
-  local timeout_s="${VLLM_STARTUP_TIMEOUT_SECONDS:-3600}"
+  local timeout_s="${VLLM_STARTUP_TIMEOUT_SECONDS:-7200}"
   local start_s
   start_s="$(date +%s)"
 
@@ -281,7 +281,7 @@ start_server_from_json() {
     --no-enable-prefix-caching \
     --scheduling-policy priority \
     --max-num-seqs 32 \
-    --swap-space 8 \
+    --swap-space 16 \
     "${extra_flags[@]}" \
     >"${logfile}" 2>&1 &
 

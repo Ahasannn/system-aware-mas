@@ -344,9 +344,11 @@ class InfraMindRouter(nn.Module):
         role_embeddings_csv: Optional[str] = None,
         latency_predictor_path: Optional[str] = None,
         length_predictor_path: Optional[str] = None,
+        quality_predictor_path: Optional[str] = None,
     ) -> None:
         super().__init__()
         self.device = device or torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        self.random_exploration = False
 
         # Model pool for executor
         self.models = models or _load_models_from_profile() or [
@@ -419,6 +421,16 @@ class InfraMindRouter(nn.Module):
             logger.info("[Router] Predictors loaded: latency={}, length={}", latency_predictor_path, length_predictor_path)
         else:
             logger.warning("[Router] No predictors loaded — system state will be zeros")
+
+        # ---- Quality predictor (for reward computation, NOT state vector) --
+        self.quality_predictor: Optional[object] = None
+        self.quality_dim = 0  # quality no longer part of state vector
+        if quality_predictor_path:
+            self.quality_predictor = _load_quality_predictor(
+                quality_predictor_path, self.encoder, self.device,
+            )
+            logger.info("[Router] Quality predictor loaded: {} (post-response use only)",
+                        quality_predictor_path)
 
         # ---- Executor policy (model + strategy selection) -----------------
         self.latency_dim = len(self.models) * (len(self.strategies) + 2)
@@ -699,10 +711,16 @@ class InfraMindRouter(nn.Module):
     ) -> Dict[str, torch.Tensor]:
         state_tensor = self._as_state_tensor(executor_state)
         hidden = self.executor_backbone(state_tensor)
+        num_models = len(self.models)
+        num_strategies = len(self.strategies)
         model_probs = self.model_head(hidden).softmax(dim=-1)
         strategy_probs = self.strategy_head(hidden).softmax(dim=-1)
 
-        if deterministic:
+        if self.random_exploration:
+            # Phase 1: uniform-random actions for diverse exploration data
+            model_idx = torch.randint(0, num_models, (state_tensor.size(0),), device=self.device)
+            strategy_idx = torch.randint(0, num_strategies, (state_tensor.size(0),), device=self.device)
+        elif deterministic:
             model_idx = model_probs.argmax(dim=-1)
             strategy_idx = strategy_probs.argmax(dim=-1)
         else:
@@ -717,8 +735,18 @@ class InfraMindRouter(nn.Module):
             "value": self.value_head(hidden).squeeze(-1),
         }
 
-    def get_system_state_vector(self, dtype: torch.dtype, query_text: str = "", role_name: str = "") -> torch.Tensor:
-        """Build ``[L_hat_σ1, ..., L_hat_σS, n_run, n_wait]`` per model."""
+    def get_system_state_vector(
+        self,
+        dtype: torch.dtype,
+        query_text: str = "",
+        role_name: str = "",
+        query_embedding: Optional[torch.Tensor] = None,
+    ) -> torch.Tensor:
+        """Build ``[L_hat_σ1, ..., L_hat_σS, n_run, n_wait]`` per model.
+
+        If ``query_embedding`` is provided, the length predictor uses it directly
+        instead of re-encoding the query text (avoids redundant SentenceTransformer calls).
+        """
         values: List[float] = []
         prompt_len = len(query_text.split()) * 1.3 if query_text else 0.0
         effective_role = role_name or "ProgrammingExpert"
@@ -741,9 +769,18 @@ class InfraMindRouter(nn.Module):
                             avg_queue=avg_queue, avg_inference=avg_inference,
                             model_name=model_name, role_name=effective_role, strategy_name=strategy_name,
                         )
-                        length_hat = self.length_predictor.predict_length(
-                            query_text, model_name=model_name, role_name=effective_role, strategy_name=strategy_name,
-                        )
+                        if query_embedding is not None:
+                            length_hat = self.length_predictor.predict_length_from_embedding(
+                                query_embedding, model_name=model_name,
+                                role_name=effective_role, strategy_name=strategy_name,
+                                prompt_token_count=prompt_len,
+                            )
+                        else:
+                            length_hat = self.length_predictor.predict_length(
+                                query_text, model_name=model_name,
+                                role_name=effective_role, strategy_name=strategy_name,
+                                prompt_token_count=prompt_len,
+                            )
                         l_hat = ttft_hat + tpot_hat * length_hat
                     except Exception as exc:
                         logger.trace("[Router] Predictor error for {} / {}: {}", model_name, strategy_name, exc)
@@ -762,9 +799,34 @@ class InfraMindRouter(nn.Module):
         budget_remaining: Union[float, torch.Tensor],
         model_index=None,
         capability_weight: float = 0.3,
+        predicted_quality: Optional[torch.Tensor] = None,
+        prompt: Optional[str] = None,
+        response: Optional[str] = None,
+        model_name: Optional[str] = None,
+        role_name: Optional[str] = None,
+        strategy_name: Optional[str] = None,
     ) -> torch.Tensor:
-        """CMDP reward per executor step: quality − λ · (step_latency / budget_remaining) + capability bonus."""
-        quality = self._to_tensor(semantic_quality)
+        """CMDP reward per executor step: quality - lambda * (step_latency / budget_remaining) + capability bonus.
+
+        Quality signal priority:
+        1. ``predicted_quality`` tensor if explicitly provided (backward compat)
+        2. Quality predictor with prompt+response if available
+        3. Binary ``semantic_quality`` fallback
+        """
+        if predicted_quality is not None:
+            quality = predicted_quality.to(self.device) / 10.0
+        elif (self.quality_predictor is not None and prompt and response
+              and model_name and role_name and strategy_name):
+            try:
+                q_hat = self.quality_predictor.predict_quality(
+                    prompt, model_name=model_name, role_name=role_name,
+                    strategy_name=strategy_name, response=response,
+                )
+                quality = torch.tensor([q_hat / 10.0], device=self.device)
+            except Exception:
+                quality = self._to_tensor(semantic_quality)
+        else:
+            quality = self._to_tensor(semantic_quality)
         lat = self._to_tensor(latency).to(self.device)
         bud = self._to_tensor(budget_remaining).clamp_min(1.0)
         reward = quality - F.softplus(self.lagrange_multiplier) * (lat / bud)
@@ -900,9 +962,18 @@ def _load_predictors(latency_path: str, length_path: str, encoder: "SemanticEnco
         raise FileNotFoundError(f"Latency predictor checkpoint not found: {lat_path}")
     if not len_path.is_file():
         raise FileNotFoundError(f"Length predictor checkpoint not found: {len_path}")
-    lat_model, lat_meta, _ = load_latency_estimator(lat_path, device=device)
-    len_model, len_meta, _ = load_length_estimator(len_path, device=device)
+    lat_model, lat_meta, lat_config = load_latency_estimator(lat_path, device=device)
+    len_model, len_meta, len_config = load_length_estimator(len_path, device=device)
     return (
-        LatencyEstimatorBundle(model=lat_model, metadata=lat_meta),
-        LengthEstimatorBundle(model=len_model, metadata=len_meta, encoder=encoder),
+        LatencyEstimatorBundle(model=lat_model, metadata=lat_meta, config=lat_config),
+        LengthEstimatorBundle(model=len_model, metadata=len_meta, encoder=encoder, config=len_config),
     )
+
+
+def _load_quality_predictor(quality_path: str, encoder: "SemanticEncoder", device: torch.device):
+    from MAR.InfraMind.quality_estimator import QualityEstimatorBundle, load_quality_estimator
+    q_path = Path(quality_path)
+    if not q_path.is_file():
+        raise FileNotFoundError(f"Quality predictor checkpoint not found: {q_path}")
+    q_model, q_meta, _ = load_quality_estimator(q_path, device=device)
+    return QualityEstimatorBundle(model=q_model, metadata=q_meta, encoder=encoder)

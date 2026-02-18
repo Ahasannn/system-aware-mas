@@ -406,15 +406,24 @@ if __name__ == '__main__':
             pbar.set_postfix(loss=f"{loss.item():.4f}", acc=f"{accuracy:.2%}", solved=f"{total_solved}/{total_executed}")
 
             # Update progress tracker
-            models_used = []
-            for workflow in compact_workflows:
+            for vi, idx in enumerate(valid_indices):
+                workflow = compact_workflows[vi] if vi < len(compact_workflows) else {}
+                wf_models = []
                 if workflow:
                     for step in workflow.get("transitions", []):
                         llm = step.get("llm_name", "")
                         if llm:
-                            models_used.append(llm)
-            for _ in range(len(valid_indices)):
-                train_progress.update(success=True, models=models_used[:len(models_used)//max(1, len(valid_indices))] if models_used else None)
+                            wf_models.append(llm)
+                wf_topology = workflow.get("topology", "") if workflow else ""
+                wf_latency = float(workflow.get("workflow_latency_seconds", 0.0)) if workflow else 0.0
+                wf_quality = float(is_solved_list[idx]) if idx < len(is_solved_list) else 0.0
+                train_progress.update(
+                    success=True,
+                    models=wf_models or None,
+                    topology=wf_topology or None,
+                    latency=wf_latency if wf_latency > 0 else None,
+                    quality=wf_quality,
+                )
             for _ in range(len(queries) - len(valid_indices)):
                 train_progress.update(success=False, models=None)
 

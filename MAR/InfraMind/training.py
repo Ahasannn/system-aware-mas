@@ -41,6 +41,9 @@ INFRAMIND_CSV_FIELDS: Sequence[str] = (
     "prompt_tokens",
     "completion_tokens",
     "total_tokens",
+    "query",
+    "response",
+    "prompt_base",
     "role_name",
     "step_index",
     "model_name",
@@ -243,12 +246,28 @@ def _build_arg_parser(default_dataset: str) -> argparse.ArgumentParser:
         help="Pipeline test mode: skip LLM calls, use mock responses/latencies. "
         "Tests the full planner → executor → trainer pipeline without vLLM servers.",
     )
+    parser.add_argument(
+        "--random-exploration",
+        action="store_true",
+        help="Phase 1 random exploration: uniform-random executor actions, skip training. "
+        "Generates diverse (model, strategy) data for judge scoring.",
+    )
+    parser.add_argument(
+        "--quality-predictor",
+        type=str,
+        default="",
+        help="Path to quality predictor checkpoint (Phase 2 training with predicted quality).",
+    )
     return parser
 
 
 def main(default_dataset: str = "mbpp") -> None:
     parser = _build_arg_parser(default_dataset)
     args = parser.parse_args()
+
+    # Random exploration forces skip_training
+    if getattr(args, "random_exploration", False):
+        args.skip_training = True
 
     random.seed(args.seed)
     torch.manual_seed(args.seed)
@@ -279,11 +298,18 @@ def main(default_dataset: str = "mbpp") -> None:
 
     latency_predictor_path = args.latency_predictor.strip() or None
     length_predictor_path = args.length_predictor.strip() or None
+    quality_predictor_path = getattr(args, "quality_predictor", "") or ""
+    quality_predictor_path = quality_predictor_path.strip() or None
     router = InfraMindRouter(
         role_domain=role_domain,
         latency_predictor_path=latency_predictor_path,
         length_predictor_path=length_predictor_path,
+        quality_predictor_path=quality_predictor_path,
     )
+    # Enable random exploration mode on the router
+    if getattr(args, "random_exploration", False):
+        router.random_exploration = True
+
     env = InfraMindEnv(
         router=router,
         max_tokens=args.max_tokens,
@@ -438,6 +464,7 @@ def main(default_dataset: str = "mbpp") -> None:
                             "prompt_tokens": episode["token_counts"].get("prompt_tokens", 0),
                             "completion_tokens": episode["token_counts"].get("completion_tokens", 0),
                             "total_tokens": episode["token_counts"].get("total_tokens", 0),
+                            "query": query,
                         }
                     ]
 
@@ -459,6 +486,9 @@ def main(default_dataset: str = "mbpp") -> None:
                                 "quality": step.get("quality", 0.0),
                                 "workflow_latency_seconds": step.get("workflow_latency_seconds", 0.0),
                                 "llm_elapsed_seconds": step.get("llm_elapsed_seconds", 0.0),
+                                "query": query,
+                                "response": step.get("response", ""),
+                                "prompt_base": step.get("prompt_base", ""),
                                 "role_name": step.get("role", ""),
                                 "step_index": step.get("step_index", 0),
                                 "model_name": step.get("model", ""),
@@ -563,6 +593,7 @@ def main(default_dataset: str = "mbpp") -> None:
 
                 def _handle_result(res: RequestResult) -> None:
                     if not res.success:
+                        logger.warning("Request {} failed: {}", res.index, res.error)
                         progress.update(success=False)
                         return
                     sample = data[res.index]

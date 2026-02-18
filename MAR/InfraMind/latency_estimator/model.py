@@ -5,7 +5,6 @@ from typing import Dict, List
 
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 
 
 @dataclass(frozen=True)
@@ -17,7 +16,9 @@ class LatencyEstimatorConfig:
 
     def __post_init__(self) -> None:
         if self.hidden_dims is None:
-            object.__setattr__(self, "hidden_dims", [128, 64])
+            object.__setattr__(self, "hidden_dims", [128, 64, 32])
+
+    log_transform: bool = False
 
     def to_dict(self) -> Dict[str, object]:
         return {
@@ -25,6 +26,7 @@ class LatencyEstimatorConfig:
             "embedding_dim": self.embedding_dim,
             "hidden_dims": list(self.hidden_dims),
             "dropout": self.dropout,
+            "log_transform": self.log_transform,
         }
 
     @classmethod
@@ -32,8 +34,9 @@ class LatencyEstimatorConfig:
         return cls(
             num_numerical_features=int(data.get("num_numerical_features", 8)),
             embedding_dim=int(data.get("embedding_dim", 16)),
-            hidden_dims=list(data.get("hidden_dims", [128, 64])),
+            hidden_dims=list(data.get("hidden_dims", [128, 64, 32])),
             dropout=float(data.get("dropout", 0.1)),
+            log_transform=bool(data.get("log_transform", False)),
         )
 
 
@@ -55,9 +58,9 @@ class LatencyEstimator(nn.Module):
     ) -> None:
         super().__init__()
         if hidden_dims is None:
-            hidden_dims = [128, 64]
-        if len(hidden_dims) != 2:
-            raise ValueError("hidden_dims must contain exactly two layer sizes.")
+            hidden_dims = [128, 64, 32]
+        if len(hidden_dims) < 2:
+            raise ValueError("hidden_dims must contain at least two layer sizes.")
 
         self.num_features = num_numerical_features
         self.feature_norm = nn.BatchNorm1d(num_numerical_features)
@@ -66,17 +69,15 @@ class LatencyEstimator(nn.Module):
         self.model_embedding = nn.Embedding(num_models, embedding_dim)
 
         fused_dim = num_numerical_features + 3 * embedding_dim
-        self.backbone = nn.Sequential(
-            nn.Linear(fused_dim, hidden_dims[0]),
-            nn.ReLU(),
-            nn.Dropout(dropout),
-            nn.Linear(hidden_dims[0], hidden_dims[1]),
-            nn.ReLU(),
-            nn.Dropout(dropout),
-        )
+        layers: List[nn.Module] = []
+        in_dim = fused_dim
+        for h in hidden_dims:
+            layers += [nn.Linear(in_dim, h), nn.ReLU(), nn.Dropout(dropout)]
+            in_dim = h
+        self.backbone = nn.Sequential(*layers)
 
-        self.head_ttft = nn.Linear(hidden_dims[1], 1)
-        self.head_tpot = nn.Linear(hidden_dims[1], 1)
+        self.head_ttft = nn.Linear(hidden_dims[-1], 1)
+        self.head_tpot = nn.Linear(hidden_dims[-1], 1)
 
     def forward(
         self,
@@ -102,6 +103,6 @@ class LatencyEstimator(nn.Module):
             dim=-1,
         )
         hidden = self.backbone(fused)
-        ttft = F.softplus(self.head_ttft(hidden)).squeeze(-1)
-        tpot = F.softplus(self.head_tpot(hidden)).squeeze(-1)
+        ttft = self.head_ttft(hidden).squeeze(-1)
+        tpot = self.head_tpot(hidden).squeeze(-1)
         return ttft, tpot

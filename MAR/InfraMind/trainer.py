@@ -199,8 +199,34 @@ class InfraMindTrainer:
             device=device,
         )
         budgets = torch.tensor([item["budget_remaining"] for item in batch], device=device)
+
+        # Predict quality from quality predictor if available (now requires response)
+        predicted_quality = None
+        if self.router.quality_predictor is not None:
+            pq_values = []
+            for item in batch:
+                query_text = item.get("query_text", "")
+                model_name = item.get("model", "")
+                role_name = item.get("role", "")
+                strategy_name = item.get("strategy", "")
+                response_text = item.get("response", "")
+                if query_text and model_name and role_name and strategy_name and response_text:
+                    try:
+                        q = self.router.quality_predictor.predict_quality(
+                            query_text, model_name=model_name,
+                            role_name=role_name, strategy_name=strategy_name,
+                            response=response_text,
+                        )
+                        pq_values.append(q)
+                    except Exception:
+                        pq_values.append(5.0)  # neutral fallback
+                else:
+                    pq_values.append(5.0)
+            predicted_quality = torch.tensor(pq_values, device=device, dtype=torch.float32)
+
         rewards = self.router.compute_executor_reward(
             qualities, latencies, budgets, model_index=model_idx,
+            predicted_quality=predicted_quality,
         ).detach()
 
         # Forward pass on full batch

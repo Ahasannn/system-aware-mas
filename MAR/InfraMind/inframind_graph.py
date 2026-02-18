@@ -120,6 +120,7 @@ class InfraMindGraph(Graph):
                             query_embedding.dtype,
                             query_text=query_text,
                             role_name=role_name,
+                            query_embedding=query_embedding,
                         )
                     exec_state = router.assemble_executor_state(
                         query_embedding, role_embedding, budget_remaining, state_vector
@@ -133,6 +134,7 @@ class InfraMindGraph(Graph):
                         query_embedding.dtype,
                         query_text=query_text,
                         role_name=role_name,
+                        query_embedding=query_embedding,
                     )
                 exec_state = router.assemble_executor_state(
                     query_embedding, role_embedding, budget_remaining, state_vector
@@ -179,6 +181,7 @@ class InfraMindGraph(Graph):
                 "llm_elapsed_seconds": float(path_latency),
                 "spatial_predecessors": predecessors,
                 "spatial_successors": successors,
+                "query_text": query_text,
             }
             step_counter += 1
 

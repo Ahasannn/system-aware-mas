@@ -14,6 +14,16 @@ from MAR.InfraMind.latency_estimator.model import LatencyEstimator, LatencyEstim
 class LatencyEstimatorBundle:
     model: LatencyEstimator
     metadata: LatencyEstimatorMetadata
+    config: Optional[LatencyEstimatorConfig] = None
+
+    def _inverse_transform(self, ttft_raw: float, tpot_raw: float) -> Tuple[float, float]:
+        """Convert model output back to original latency space."""
+        if self.config is not None and self.config.log_transform:
+            import math
+            ttft = math.expm1(ttft_raw * max(self.metadata.ttft_log_std, 1e-8) + self.metadata.ttft_log_mean)
+            tpot = math.expm1(tpot_raw * max(self.metadata.tpot_log_std, 1e-8) + self.metadata.tpot_log_mean)
+            return max(ttft, 0.0), max(tpot, 0.0)
+        return ttft_raw, tpot_raw
 
     def predict_latency(
         self,
@@ -85,7 +95,7 @@ class LatencyEstimatorBundle:
         self.model.eval()
         with torch.no_grad():
             ttft, tpot = self.model(x_num, strategy_tensor, role_tensor, model_tensor)
-        return float(ttft.item()), float(tpot.item())
+        return self._inverse_transform(float(ttft.item()), float(tpot.item()))
 
 
 def save_latency_estimator(
@@ -123,3 +133,12 @@ def load_latency_estimator(
     if device is not None:
         model.to(device)
     return model, metadata, config
+
+
+def load_latency_estimator_bundle(
+    path: Union[str, Path],
+    *,
+    device: Optional[torch.device] = None,
+) -> LatencyEstimatorBundle:
+    model, metadata, config = load_latency_estimator(path, device=device)
+    return LatencyEstimatorBundle(model=model, metadata=metadata, config=config)

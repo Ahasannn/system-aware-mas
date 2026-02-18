@@ -5,9 +5,9 @@
 #SBATCH --account=qi855292.ucf
 #SBATCH --partition=hpg-b200
 #SBATCH --gres=gpu:b200:2
-#SBATCH --time=12:00:00
+#SBATCH --time=06:30:00
 #SBATCH --mem=64G
-#SBATCH --cpus-per-task=16
+#SBATCH --cpus-per-task=12
 #SBATCH --ntasks=1
 
 # Print job info
@@ -46,12 +46,18 @@ TRAIN_LIMIT=$(python3 -c "import json; print(json.load(open('${CONFIG_FILE}'))['
 echo "Train Limit (from config): ${TRAIN_LIMIT}"
 echo ""
 
-# Checkpoint and telemetry paths
+# Set environment variables for training
+export KEY="EMPTY"
+export TOKENIZERS_PARALLELISM="false"
+COST_RATE="${COST_RATE:-700.0}"
+
+# Checkpoint and telemetry paths (include cost rate in name)
+COST_TAG="cost$(printf '%.0f' ${COST_RATE})"
 CHECKPOINT_DIR="${BLUE_STORAGE}/checkpoints/mas_router"
 mkdir -p "${CHECKPOINT_DIR}"
-CHECKPOINT_PATH="${CHECKPOINT_DIR}/mas_math_train_${TRAIN_LIMIT}.pth"
+CHECKPOINT_PATH="${CHECKPOINT_DIR}/mas_math_train_${TRAIN_LIMIT}_${COST_TAG}.pth"
 TELEMETRY_DIR="logs/baseline_mas_training/math"
-TELEMETRY_CSV="${TELEMETRY_DIR}/mas_train_math_${TRAIN_LIMIT}.csv"
+TELEMETRY_CSV="${TELEMETRY_DIR}/mas_train_math_${TRAIN_LIMIT}_${COST_TAG}.csv"
 mkdir -p logs "${TELEMETRY_DIR}"
 
 # Dataset configuration
@@ -60,11 +66,6 @@ if [[ ! -d "${MATH_DATASET_ROOT}/train" || ! -d "${MATH_DATASET_ROOT}/test" ]]; 
     echo "ERROR: MATH dataset not found at ${MATH_DATASET_ROOT}"
     exit 1
 fi
-
-# Set environment variables for training
-export KEY="EMPTY"
-export TOKENIZERS_PARALLELISM="false"
-COST_RATE="${COST_RATE:-700.0}"
 
 # Function to cleanup vLLM servers on exit
 cleanup_vllm() {
@@ -132,7 +133,7 @@ echo ""
 # Training with config-specified limit (${TRAIN_LIMIT} examples)
 CMD="python Experiments/run_math.py \
   --train_limit ${TRAIN_LIMIT} \
-  --epochs 2 \
+  --epochs 5 \
   --batch_size 32 \
   --lr 0.01 \
   --cost_rate ${COST_RATE} \

@@ -1,4 +1,4 @@
-from .bundle import LatencyEstimatorBundle, load_latency_estimator, save_latency_estimator
+from .bundle import LatencyEstimatorBundle, load_latency_estimator, load_latency_estimator_bundle, save_latency_estimator
 from .data import (
     LatencyEstimatorDataset,
     LatencyEstimatorMetadata,
@@ -22,5 +22,6 @@ __all__ = [
     "prepare_latency_estimator_dataset",
     "save_latency_estimator",
     "load_latency_estimator",
+    "load_latency_estimator_bundle",
     "train_latency_estimator",
 ]
