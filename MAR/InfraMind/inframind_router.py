@@ -1,14 +1,14 @@
 """
-InfraMind Router — Budget-Aware Hierarchical CMDP Router.
+InfraMind Router — Infrastructure-Aware Hierarchical CMDP Router.
 
 Architecture:
   - **Planner**: MAS-based VAE+GFusion modules (TaskClassifier, CollabDeterminer,
-    NumDeterminer, RoleAllocation) conditioned on latency budget via
-    Budget-Conditioned Feature Modulation (BCFM / FiLM).
-    Selects topology, agent count, and roles.  NO upfront LLM selection.
+    NumDeterminer, RoleAllocation). Selects topology, agent count, and roles
+    based on query semantics only. No budget awareness — quality-driven.
 
   - **Executor**: Per-node MLP that selects (model, strategy) at runtime based on
     query embedding, role embedding, remaining budget, and live system metrics.
+    Handles ALL budget/latency adaptation.
 """
 
 import json
@@ -245,49 +245,6 @@ class RoleAllocation(nn.Module):
 
 
 # ---------------------------------------------------------------------------
-# Budget-Conditioned Feature Modulation (BCFM)
-# ---------------------------------------------------------------------------
-
-class BudgetConditioner(nn.Module):
-    """
-    Budget-Conditioned Feature Modulation (BCFM).
-
-    Applies Feature-wise Linear Modulation (FiLM) to condition the semantic
-    query embedding on the available latency budget.  The scale parameter γ
-    is initialized near identity (centered at 1) so the module degrades
-    gracefully to standard MAS behaviour when budget information is
-    uninformative.
-
-    Args:
-        embed_dim: Dimensionality of the query embedding (default 384).
-        hidden_dim: Width of the budget encoder MLP (default 64).
-    """
-
-    def __init__(self, embed_dim: int = 384, hidden_dim: int = 64):
-        super().__init__()
-        self.budget_encoder = nn.Sequential(
-            nn.Linear(1, hidden_dim),
-            nn.GELU(),
-            nn.Linear(hidden_dim, hidden_dim),
-        )
-        self.scale = nn.Linear(hidden_dim, embed_dim)  # γ
-        self.shift = nn.Linear(hidden_dim, embed_dim)  # β
-
-    def forward(self, query_emb: torch.Tensor, budget: torch.Tensor) -> torch.Tensor:
-        """
-        Args:
-            query_emb: ``(B, D)`` semantic query embedding.
-            budget:    ``(B, 1)`` budget in seconds (raw, not normalized).
-        Returns:
-            ``(B, D)`` budget-conditioned query embedding.
-        """
-        h = self.budget_encoder(budget)
-        gamma = 1.0 + self.scale(h)   # centered at identity
-        beta = self.shift(h)
-        return gamma * query_emb + beta
-
-
-# ---------------------------------------------------------------------------
 # Semantic Encoder
 # ---------------------------------------------------------------------------
 
@@ -318,11 +275,11 @@ class InfraMindRouter(nn.Module):
     """
     Hierarchical CMDP router.
 
-    **Planner** (MAS architecture + BCFM):
-        Budget-conditioned query embedding → TaskClassifier → CollabDeterminer
-        → NumDeterminer → RoleAllocation.  Returns topology, agent count, and
-        roles together with differentiable log-probabilities for REINFORCE.
-        No LLM selection at planning time.
+    **Planner** (MAS architecture, quality-driven):
+        Query embedding → TaskClassifier → CollabDeterminer → NumDeterminer
+        → RoleAllocation.  Returns topology, agent count, and roles together
+        with differentiable log-probabilities for REINFORCE.
+        No LLM selection or budget awareness at planning time.
 
     **Executor** (infrastructure-aware MLP):
         Per-node runtime selection of (model, strategy) based on query embedding,
@@ -386,12 +343,6 @@ class InfraMindRouter(nn.Module):
         self._cached_tasks_emb: Optional[torch.Tensor] = None
         self._cached_collabs_emb: Optional[torch.Tensor] = None
 
-        # ---- Budget-Conditioned Feature Modulation (BCFM) -----------------
-        self.budget_conditioner = BudgetConditioner(
-            embed_dim=embedding_dim,
-            hidden_dim=planner_hidden_dim,
-        )
-
         # ---- MAS Planner modules (no LLMRouter) --------------------------
         self.task_classifier = TaskClassifier(
             input_dim=embedding_dim, hidden_dim=planner_hidden_dim,
@@ -433,7 +384,7 @@ class InfraMindRouter(nn.Module):
                         quality_predictor_path)
 
         # ---- Executor policy (model + strategy selection) -----------------
-        self.latency_dim = len(self.models) * (len(self.strategies) + 2)
+        self.latency_dim = len(self.models) * len(self.strategies)
         executor_state_dim = embedding_dim + embedding_dim + 1 + self.latency_dim
         self.executor_backbone = nn.Sequential(
             nn.Linear(executor_state_dim, executor_hidden_dim),
@@ -446,39 +397,7 @@ class InfraMindRouter(nn.Module):
         self.strategy_head = nn.Linear(executor_hidden_dim, len(self.strategies))
         self.value_head = nn.Linear(executor_hidden_dim, 1)
 
-        # Lagrange multiplier for CMDP latency constraint
-        self.lagrange_multiplier = nn.Parameter(torch.tensor(lambda_init, device=self.device))
-
-        # Benchmark-based model capability prior (reward shaping)
-        self.capability_prior: Dict[str, Dict[str, float]] = {
-            "Math": {
-                "deepseek-ai/DeepSeek-R1-Distill-Qwen-32B": 0.50,
-                "mistralai/Mistral-Small-24B-Instruct-2501": 0.30,
-                "Qwen/Qwen2.5-Coder-14B-Instruct": 0.25,
-                "meta-llama/Llama-3.1-8B-Instruct": 0.20,
-                "meta-llama/Llama-3.2-3B-Instruct": 0.10,
-            },
-            "Code": {
-                "deepseek-ai/DeepSeek-R1-Distill-Qwen-32B": 0.35,
-                "mistralai/Mistral-Small-24B-Instruct-2501": 0.40,
-                "Qwen/Qwen2.5-Coder-14B-Instruct": 0.50,
-                "meta-llama/Llama-3.1-8B-Instruct": 0.25,
-                "meta-llama/Llama-3.2-3B-Instruct": 0.10,
-            },
-            "Commonsense": {
-                "deepseek-ai/DeepSeek-R1-Distill-Qwen-32B": 0.45,
-                "mistralai/Mistral-Small-24B-Instruct-2501": 0.50,
-                "Qwen/Qwen2.5-Coder-14B-Instruct": 0.30,
-                "meta-llama/Llama-3.1-8B-Instruct": 0.25,
-                "meta-llama/Llama-3.2-3B-Instruct": 0.15,
-            },
-        }
-        # Pre-compute capability tensor for current domain (indexed by model position)
-        domain_caps = self.capability_prior.get(role_domain, {})
-        self._capability_tensor = torch.tensor(
-            [domain_caps.get(m, 0.0) for m in self.models],
-            device=self.device, dtype=torch.float32,
-        )
+        # Note: no Lagrange multiplier — reward uses direct over-budget penalty
 
         self.to(self.device)
 
@@ -567,8 +486,11 @@ class InfraMindRouter(nn.Module):
     ) -> Dict[str, object]:
         """
         Run the full planner pipeline:
-            query → BCFM(budget) → TaskClassifier → CollabDeterminer
+            query → TaskClassifier → CollabDeterminer
             → NumDeterminer → RoleAllocation.
+
+        The planner selects topology and roles based on query semantics only.
+        Budget/latency adaptation is handled entirely by the executor.
 
         Returns a dict with:
             query_embedding, topology_name, role_names, agent_count,
@@ -581,27 +503,23 @@ class InfraMindRouter(nn.Module):
         query_embedding = self.encode_query(query, query_id=query_id, dataset_name=dataset_name)
         query_emb_batch = query_embedding.unsqueeze(0)  # (1, 384)
 
-        # 2. Budget-Conditioned Feature Modulation
-        budget_tensor = torch.tensor([[budget_total]], device=self.device, dtype=query_emb_batch.dtype)
-        conditioned_emb = self.budget_conditioner(query_emb_batch, budget_tensor)  # (1, 384)
-
-        # 3. Task classification (always use router's domain, not classifier output)
+        # 2. Task classification (always use router's domain, not classifier output)
         # The task classifier is still called for loss computation during training
-        _, task_probs, query_context = self.task_classifier(conditioned_emb, self._cached_tasks_emb)
+        _, task_probs, query_context = self.task_classifier(query_emb_batch, self._cached_tasks_emb)
 
         # Always use the router's configured domain (not task classifier output)
         task_name = self.role_domain
         tasks_role_emb_list = [self._task_role_emb[task_name]]
         tasks_role_list = [self._task_role_database[task_name]]
 
-        # 4. Collaboration / topology selection
+        # 3. Collaboration / topology selection
         selected_collab_idx, collab_log_probs, collab_context, collab_vae_loss = \
-            self.collab_determiner(self._cached_collabs_emb, conditioned_emb)
+            self.collab_determiner(self._cached_collabs_emb, query_emb_batch)
         topology_index = int(selected_collab_idx[0].item())
         topology_name = self._reasoning_profile[topology_index]["Name"]
 
-        # 5. Number of agents
-        agent_num_int, agent_num_float, num_vae_loss = self.num_determiner(conditioned_emb)
+        # 4. Number of agents
+        agent_num_int, agent_num_float, num_vae_loss = self.num_determiner(query_emb_batch)
 
         # 6. Role allocation
         planner_context = torch.cat([query_context, collab_context], dim=-1)  # (1, 2*hidden)
@@ -628,7 +546,6 @@ class InfraMindRouter(nn.Module):
             "task_probs": task_probs,
             "planner_log_probs": planner_log_probs,
             "planner_vae_loss": planner_vae_loss,
-            "budget_total": budget_total,
             "chosen_role_indices": [int(idx.item()) for idx in selected_roles_idx[0]],
         }
 
@@ -639,7 +556,6 @@ class InfraMindRouter(nn.Module):
     def evaluate_plan(
         self,
         query_embedding: torch.Tensor,
-        budget_total: float,
         chosen_topology_idx: int,
         chosen_role_indices: List[int],
         agent_count: int,
@@ -652,25 +568,21 @@ class InfraMindRouter(nn.Module):
         self._ensure_planner_caches()
 
         query_emb_batch = query_embedding.unsqueeze(0)
-        budget_tensor = torch.tensor(
-            [[budget_total]], device=self.device, dtype=query_emb_batch.dtype,
-        )
-        conditioned_emb = self.budget_conditioner(query_emb_batch, budget_tensor)
 
         # Task classification
         _, task_probs, query_context = self.task_classifier(
-            conditioned_emb, self._cached_tasks_emb,
+            query_emb_batch, self._cached_tasks_emb,
         )
 
         # Collab — evaluate given topology index
         collab_log_prob, collab_embedding, collab_vae_loss = (
             self.collab_determiner.evaluate(
-                self._cached_collabs_emb, conditioned_emb, chosen_topology_idx,
+                self._cached_collabs_emb, query_emb_batch, chosen_topology_idx,
             )
         )
 
         # Num determiner (deterministic, only need vae_loss)
-        _, _, num_vae_loss = self.num_determiner(conditioned_emb)
+        _, _, num_vae_loss = self.num_determiner(query_emb_batch)
 
         # Role allocation — evaluate given role indices
         task_name = self.role_domain
@@ -702,9 +614,14 @@ class InfraMindRouter(nn.Module):
         budget_remaining: float,
         system_state_vector: torch.Tensor,
     ) -> Dict[str, torch.Tensor]:
-        budget_tensor = torch.tensor([budget_remaining], device=self.device, dtype=query_embedding.dtype)
-        state_tensor = torch.cat([query_embedding, role_embedding, budget_tensor, system_state_vector], dim=0)
-        return {"state": state_tensor, "budget_remaining": budget_tensor}
+        # Normalize budget_remaining to [0, 1] via log-scaling so it matches
+        # embedding magnitudes (~0.3) instead of raw seconds (0-300+).
+        norm_budget = math.log(max(budget_remaining, 1.0)) / math.log(300.0)
+        budget_tensor = torch.tensor([norm_budget], device=self.device, dtype=query_embedding.dtype)
+        # Normalize predicted latencies: log(1 + lat) / log(300) to match scale
+        norm_sys = torch.log1p(system_state_vector.clamp_min(0.0)) / math.log(300.0)
+        state_tensor = torch.cat([query_embedding, role_embedding, budget_tensor, norm_sys], dim=0)
+        return {"state": state_tensor, "budget_remaining": torch.tensor([budget_remaining], device=self.device, dtype=query_embedding.dtype)}
 
     def get_executor_action(
         self, executor_state: Union[torch.Tensor, Dict[str, torch.Tensor]], deterministic: bool = False,
@@ -742,7 +659,7 @@ class InfraMindRouter(nn.Module):
         role_name: str = "",
         query_embedding: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
-        """Build ``[L_hat_σ1, ..., L_hat_σS, n_run, n_wait]`` per model.
+        """Build ``[L_hat_σ1, ..., L_hat_σS]`` per model (predicted latency per strategy).
 
         If ``query_embedding`` is provided, the length predictor uses it directly
         instead of re-encoding the query text (avoids redundant SentenceTransformer calls).
@@ -783,9 +700,8 @@ class InfraMindRouter(nn.Module):
                             )
                         l_hat = ttft_hat + tpot_hat * length_hat
                     except Exception as exc:
-                        logger.trace("[Router] Predictor error for {} / {}: {}", model_name, strategy_name, exc)
+                        logger.warning("[Router] Predictor error for {} / {}: {}", model_name, strategy_name, exc)
                 values.append(l_hat)
-            values.extend([n_run, n_wait])
         return torch.tensor(values, device=self.device, dtype=dtype)
 
     # ------------------------------------------------------------------
@@ -794,47 +710,54 @@ class InfraMindRouter(nn.Module):
 
     def compute_executor_reward(
         self,
-        semantic_quality: Union[float, torch.Tensor],
-        latency: Union[float, torch.Tensor],
+        is_solved: Union[float, torch.Tensor],
+        step_latency: Union[float, torch.Tensor],
         budget_remaining: Union[float, torch.Tensor],
-        model_index=None,
-        capability_weight: float = 0.3,
-        predicted_quality: Optional[torch.Tensor] = None,
-        prompt: Optional[str] = None,
-        response: Optional[str] = None,
-        model_name: Optional[str] = None,
-        role_name: Optional[str] = None,
-        strategy_name: Optional[str] = None,
+        quality_weights: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
-        """CMDP reward per executor step: quality - lambda * (step_latency / budget_remaining) + capability bonus.
+        """Step-level executor reward with quality credit and budget penalty.
 
-        Quality signal priority:
-        1. ``predicted_quality`` tensor if explicitly provided (backward compat)
-        2. Quality predictor with prompt+response if available
-        3. Binary ``semantic_quality`` fallback
+        Uses STEP-LEVEL latency and budget_remaining (not episode-level)
+        so each step gets a reward specific to its own model/strategy choice.
+
+        Quality predictor used for BOTH correct and wrong answers:
+          - Correct: credit assignment — high-quality steps get more reward
+          - Wrong: dense shaping — "almost correct" steps penalized less
+
+        If solved:
+            quality_credit = 0.2 * quality_weight     # [0.0, 0.2]
+            step_overshoot = max(0, step_latency / budget_remaining - 1.0)
+            budget_penalty = min(0.5, step_overshoot * 0.5)
+            reward = 0.8 + quality_credit - budget_penalty   # [0.30, 1.0]
+        If wrong:
+            shaping = quality_weight                  # [0.0, 1.0]
+            reward = -1.0 + 0.3 * shaping            # [-1.0, -0.7]
+
+        Quality credit and budget penalty are ADDITIVE (independent axes),
+        so a high-quality step can't mask a budget violation.
+        Correct ALWAYS outranks wrong (min gap = 1.00: +0.30 vs -0.70).
         """
-        if predicted_quality is not None:
-            quality = predicted_quality.to(self.device) / 10.0
-        elif (self.quality_predictor is not None and prompt and response
-              and model_name and role_name and strategy_name):
-            try:
-                q_hat = self.quality_predictor.predict_quality(
-                    prompt, model_name=model_name, role_name=role_name,
-                    strategy_name=strategy_name, response=response,
-                )
-                quality = torch.tensor([q_hat / 10.0], device=self.device)
-            except Exception:
-                quality = self._to_tensor(semantic_quality)
+        solved = self._to_tensor(is_solved).to(self.device)
+        s_lat = self._to_tensor(step_latency).to(self.device)
+        b_rem = self._to_tensor(budget_remaining).clamp_min(1.0)
+
+        # Quality credit/shaping (step-level from quality predictor)
+        if quality_weights is not None:
+            qw = quality_weights.to(self.device).clamp(0.0, 1.0)
         else:
-            quality = self._to_tensor(semantic_quality)
-        lat = self._to_tensor(latency).to(self.device)
-        bud = self._to_tensor(budget_remaining).clamp_min(1.0)
-        reward = quality - F.softplus(self.lagrange_multiplier) * (lat / bud)
-        # Reward shaping: add capability bonus per model
-        if model_index is not None:
-            mi = model_index if isinstance(model_index, torch.Tensor) else torch.tensor(model_index, device=self.device)
-            cap_bonus = self._capability_tensor[mi.long()]
-            reward = reward + capability_weight * cap_bonus
+            # Fallback: neutral credit (no differentiation between steps)
+            qw = torch.ones_like(solved) * 0.5
+
+        # --- Correct: [0.30, 1.0] with additive quality credit + budget penalty ---
+        quality_credit = 0.2 * qw                           # [0.0, 0.2]
+        overshoot = (s_lat / b_rem - 1.0).clamp_min(0.0)
+        budget_penalty = (overshoot * 0.5).clamp_max(0.5)   # steeper: 0.5 per 1x overshoot
+        correct_reward = (0.8 + quality_credit - budget_penalty).clamp_min(0.3)
+
+        # --- Wrong: [-1.0, -0.7] with quality shaping ---
+        wrong_reward = -1.0 + 0.3 * qw
+
+        reward = solved * correct_reward + (1.0 - solved) * wrong_reward
         return reward
 
     # ------------------------------------------------------------------
@@ -855,8 +778,7 @@ class InfraMindRouter(nn.Module):
 
         Transfers: task_classifier, collab_determiner, num_determiner,
         role_allocation.  Skips MAS-only modules (text_encoder, llm_router)
-        and leaves InfraMind-only modules (budget_conditioner, executor, etc.)
-        at their random init.
+        and leaves InfraMind-only modules (executor, etc.) at their random init.
         """
         _SHARED_PREFIXES = (
             "task_classifier.",
@@ -891,7 +813,7 @@ class InfraMindRouter(nn.Module):
     def planner_parameters(self):
         """All parameters that belong to the planner (for optimizer)."""
         params: List[torch.Tensor] = []
-        for module in [self.budget_conditioner, self.task_classifier,
+        for module in [self.task_classifier,
                        self.collab_determiner, self.num_determiner, self.role_allocation]:
             params.extend(module.parameters())
         return params

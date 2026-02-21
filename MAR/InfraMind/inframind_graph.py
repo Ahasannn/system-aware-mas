@@ -178,6 +178,7 @@ class InfraMindGraph(Graph):
                 "model": model_name,
                 "strategy": strategy_name,
                 "budget_remaining": float(budget_remaining),
+                "budget_total": float(budget_total),
                 "llm_elapsed_seconds": float(path_latency),
                 "spatial_predecessors": predecessors,
                 "spatial_successors": successors,

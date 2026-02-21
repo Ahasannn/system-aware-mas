@@ -112,7 +112,7 @@ class InfraMindEnv:
         prompt_file: Optional[str] = None,
         metrics_interval: float = 1.0,
         metrics_url_map: Optional[Dict[str, str]] = None,
-        request_timeout: float = 600.0,
+        request_timeout: float = 1800.0,
         quality_fn: Optional[Callable[[str, Optional[List[str]], Optional[Any]], Tuple[Union[float, torch.Tensor], Dict[str, object]]]] = None,
         dry_run: bool = False,
     ) -> None:
@@ -156,11 +156,10 @@ class InfraMindEnv:
         if not scorer and not tests:
             raise ValueError("Tests are required for quality scoring; no fallback is used.")
 
-        # ---- Planner: budget-conditioned MAS pipeline ----
+        # ---- Planner: MAS pipeline (topology + role selection) ----
         with self.router_lock:
             plan = self.router.plan_graph(
                 query,
-                budget_total=budget_total,
                 deterministic=deterministic,
                 query_id=query_id,
                 dataset_name=dataset_name,
@@ -226,6 +225,7 @@ class InfraMindEnv:
         for transition in executor_transitions:
             transition["quality"] = float(quality.detach().cpu().item())
             transition["workflow_latency_seconds"] = workflow_latency
+            transition["budget_total"] = float(budget_total)
 
         # Planner transition — store detached inputs + action indices for
         # re-computation at training time (avoids stale computation graphs).

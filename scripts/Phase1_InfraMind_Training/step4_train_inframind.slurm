@@ -5,13 +5,14 @@
 #SBATCH --account=qi855292.ucf
 #SBATCH --partition=hpg-b200
 #SBATCH --gres=gpu:b200:2
-#SBATCH --time=12:00:00
+#SBATCH --time=24:00:00
 #SBATCH --mem=64G
 #SBATCH --cpus-per-task=16
 #SBATCH --ntasks=1
 
 # =========================================================================
-# Step 4: Phase 2 InfraMind training — uses all 3 predictors, fresh from MAS
+# Step 4: InfraMind training — resume from best checkpoint
+#   Phase 2b: budget-awareness focus with tighter budgets, lower max_num_seqs
 # =========================================================================
 
 echo "========================================="
@@ -40,16 +41,26 @@ LATENCY_PREDICTOR="${PREDICTOR_DIR}/latency_estimator.pth"
 LENGTH_PREDICTOR="${PREDICTOR_DIR}/length_estimator.pth"
 QUALITY_PREDICTOR="${PREDICTOR_DIR}/quality_estimator.pth"
 
-LIMIT="${LIMIT:-500}"
-EPOCHS="${EPOCHS:-3}"
-ARRIVAL_RATES="${ARRIVAL_RATES:-0,10,50,100,200,500}"
-BUDGET_SWEEP="${BUDGET_SWEEP:-20,60,150}"
-CONCURRENCY="${CONCURRENCY:-4}"
+LIMIT="${LIMIT:-519}"
+VAL_LIMIT="${VAL_LIMIT:-131}"
+EPOCHS="${EPOCHS:-40}"
+ARRIVAL_RATES="${ARRIVAL_RATES:-10,50,100,200,400,150}"
+BUDGET_MIN="${BUDGET_MIN:-5}"
+BUDGET_MAX="${BUDGET_MAX:-120}"
+CONCURRENCY="${CONCURRENCY:-1000}"
 TRAINING_BATCH_SIZE="${TRAINING_BATCH_SIZE:-64}"
+PATIENCE="${PATIENCE:-8}"
+
+# vLLM concurrency per server — lower to create real queue pressure
+export VLLM_MAX_NUM_SEQS="${VLLM_MAX_NUM_SEQS:-16}"
 
 CHECKPOINT_DIR="${BLUE_STORAGE}/checkpoints/inframind"
 mkdir -p "${CHECKPOINT_DIR}"
-CHECKPOINT_PATH="${CHECKPOINT_DIR}/inframind_${DATASET}_phase2.pt"
+
+# Resume from the best checkpoint from previous training (val_solve_rate=0.7252)
+# --checkpoint-path is the file to LOAD from (when --resume-checkpoint is set).
+# After loading, new saves go to ${CHECKPOINT_DIR}/inframind_${DATASET}_{run_id}.pt
+CHECKPOINT_PATH="${CHECKPOINT_DIR}/inframind_math_20260219_112548_job25279835_best.pt"
 
 LOG_BASE="logs/InfraMind_Phase_1_Training/${DATASET}"
 STEP_DIR="${LOG_BASE}/step4_train"
@@ -69,6 +80,13 @@ for ckpt in "${LATENCY_PREDICTOR}" "${LENGTH_PREDICTOR}" "${QUALITY_PREDICTOR}";
     fi
     echo "  Found: $ckpt ($(du -h "$ckpt" | cut -f1))"
 done
+
+# Verify resume checkpoint exists
+if [ ! -f "${CHECKPOINT_PATH}" ]; then
+    echo "ERROR: Resume checkpoint not found: ${CHECKPOINT_PATH}"
+    exit 1
+fi
+echo "  Resume checkpoint: ${CHECKPOINT_PATH} ($(du -h "${CHECKPOINT_PATH}" | cut -f1))"
 echo ""
 
 # --- vLLM cleanup ---
@@ -104,26 +122,37 @@ echo ""
 
 # --- Phase 2 training ---
 echo "========================================="
-echo "Phase 2 InfraMind Training"
+echo "InfraMind Training (Resume from best checkpoint)"
 echo "Dataset: ${DATASET}"
-echo "MAS checkpoint: ${MAS_CHECKPOINT}"
-echo "Quality predictor: ${QUALITY_PREDICTOR}"
-echo "Latency predictor: ${LATENCY_PREDICTOR}"
-echo "Length predictor: ${LENGTH_PREDICTOR}"
+echo "Limit: ${LIMIT} train, ${VAL_LIMIT} val"
+echo "Epochs: ${EPOCHS}, Patience: ${PATIENCE}"
+echo "Budget: LogUniform(${BUDGET_MIN}, ${BUDGET_MAX})"
+echo "vLLM max_num_seqs: ${VLLM_MAX_NUM_SEQS}"
+echo "Reward: quality-first + effort mandate + quality predictor shaping"
+echo "Arrival rates: ${ARRIVAL_RATES}"
+echo "Concurrency: ${CONCURRENCY}"
+echo "Resume checkpoint: ${CHECKPOINT_PATH}"
+echo "Predictors: latency, length, quality"
 echo "========================================="
 
 CMD="python Experiments/train_inframind_${DATASET}.py \
   --epochs ${EPOCHS} \
   --limit ${LIMIT} \
+  --val-limit ${VAL_LIMIT} \
+  --budget-min ${BUDGET_MIN} \
+  --budget-max ${BUDGET_MAX} \
   --arrival-rates ${ARRIVAL_RATES} \
-  --budget-sweep ${BUDGET_SWEEP} \
   --concurrency ${CONCURRENCY} \
   --training-batch-size ${TRAINING_BATCH_SIZE} \
+  --patience ${PATIENCE} \
+  --lr-scheduler --lr-patience 3 --lr-factor 0.5 \
   --mas-checkpoint ${MAS_CHECKPOINT} \
+  --resume-checkpoint \
   --latency-predictor ${LATENCY_PREDICTOR} \
   --length-predictor ${LENGTH_PREDICTOR} \
   --quality-predictor ${QUALITY_PREDICTOR} \
   --checkpoint-path ${CHECKPOINT_PATH} \
+  --checkpoint-dir ${CHECKPOINT_DIR} \
   --telemetry-csv ${TELEMETRY_CSV} \
   --dataset-root ${DATASET_ROOT}"
 

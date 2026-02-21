@@ -5,7 +5,7 @@
 Existing multi-agent LLM routing approaches select collaboration topologies, roles, and models based solely on task semantics, ignoring the infrastructure state of the serving layer. This infrastructure-oblivious routing causes: (1) **load imbalance** — static model preferences create deep queues on preferred models while others sit idle; (2) **avoidable queuing latency** — requests wait on congested models when idle alternatives exist; (3) **wasted compute** — workflows assigned infeasible topologies exceed their latency budget, discarding all generated tokens; and (4) **missed quality opportunities** — idle capacity at low load is never invested in richer reasoning.
 
 InfraMind addresses all four problems by making infrastructure state observable at every decision level. Given a query $q$, a model pool $\mathcal{M}$, and a per-query latency budget $\beta$, InfraMind learns to:
-1. **Select a collaboration topology** $\tau \in \mathcal{T}$ and assign roles $\mathcal{R}$ — budget-aware structural planning.
+1. **Select a collaboration topology** $\tau \in \mathcal{T}$ and assign roles $\mathcal{R}$ — quality-driven structural planning.
 2. **Route each role to an LLM** $m \in \mathcal{M}$ with a prompting strategy $\sigma \in \Sigma$ — infrastructure-aware resource allocation.
 3. **Schedule requests** via Earliest-Deadline-First (EDF) priority at the serving layer — deadline-aware scheduling.
 
@@ -19,145 +19,129 @@ where $R$ is the task quality reward and $C$ is the latency cost.
 
 ## 2. Architecture Overview
 
-<!--
-ARCHITECTURE DIAGRAM (Figure X)
-
-                    ┌─────────────────────────────────────────┐
-                    │            PLANNER (once, t=0)           │
-  Query q ────▶ e_q │                                         │
-                    │  ┌──────┐    ┌───────────────────────┐  │
-  Budget β ────────▶│  │ BCFM │──▶│  MAS Planner Pipeline  │  │
-                    │  │(FiLM)│    │      (black box)       │  │
-                    │  └──────┘    └───────────┬───────────┘  │
-                    │   ★ ours                 │              │
-                    └──────────────────────────┼──────────────┘
-                                               │
-                              Topology τ, Roles (r₁...rₖ)
-                                               │
-                    ┌──────────────────────────▼──────────────┐
-                    │      EXECUTOR (per role rₖ) ★ ours      │
-                    │                                         │
-                    │  State: [e_q ‖ e_rₖ ‖ b_rem ‖ z_sys]  │
-                    │                                         │
-                    │  z_sys = predicted latency for every    │
-   Metrics ────────▶│  (model, strategy) + queue depths       │
-   Watcher          │                                         │
-                    │  ┌─────────┐ ┌─────────┐ ┌──────────┐  │
-                    │  │Model Hd │ │Strat Hd │ │Value Hd  │  │
-                    │  └────┬────┘ └────┬────┘ └──────────┘  │
-                    └───────┼───────────┼─────────────────────┘
-                            │           │
-                     (model m, strategy σ)
-                            │
-                    ┌───────▼─────────────────────────────────┐
-                    │      vLLM SERVING LAYER ★ ours          │
-                    │   EDF priority = ⌊t_arrival + β⌋        │
-                    │                                         │
-                    │  ┌───────┐ ┌───────┐      ┌───────┐    │
-                    │  │  m₁   │ │  m₂   │ ···  │  mₘ   │    │
-                    │  └───────┘ └───────┘      └───────┘    │
-                    └─────────────────────────────────────────┘
-
-★ = InfraMind contributions
--->
-
 InfraMind uses a **two-level hierarchy** separating structural decisions from resource allocation:
 
 | Level | Observes | Decides | Operates |
 |-------|----------|---------|----------|
-| **Planner** | Query embedding + budget $\beta$ | Topology $\tau$, agent count $K$, roles $\mathcal{R}$ | Once at $t=0$ |
+| **Planner** | Query embedding $\mathbf{e}_q$ | Topology $\tau$, agent count $K$, roles $\mathcal{R}$ | Once at $t=0$ |
 | **Executor** | Query + role + remaining budget + system state | Model $m$, strategy $\sigma$ per role | Per agent node |
 | **EDF Scheduler** | Deadline $D_i = t_i^{\text{arr}} + \beta_i$ | Queue ordering | Per request at serving layer |
 
-### 2.1 Planner with Budget-Conditioned Feature Modulation
+### 2.1 Planner (Quality-Driven, No Budget Awareness)
 
-The Planner uses an existing MAS routing pipeline \cite{masrouter} to select topology $\tau$, agent count $K$, and roles $\mathcal{R}$ from a query embedding. We treat this pipeline as a black box — our contribution is making it **budget-aware**.
+The Planner uses the MAS routing pipeline (VAE + GFusion cross-attention) to select topology $\tau$, agent count $K$, and roles $\mathcal{R}$ from a query embedding. The planner operates on **task semantics only** — it is purely quality-driven with no budget conditioning.
 
-Existing MAS planners operate on task semantics alone and cannot distinguish a 10-second budget from a 120-second budget for the same query, leading to structurally infeasible plans (e.g., assigning a multi-round debate when only seconds remain). We introduce **Budget-Conditioned Feature Modulation (BCFM)**, a FiLM layer that modulates the query embedding *before* it enters the planner:
+**Design rationale:** The planner decides *what reasoning structure* to use (e.g., debate, chain-of-thought, reflection). This is a semantic decision that should depend on task difficulty and domain, not on infrastructure constraints. Budget awareness is delegated entirely to the executor, which decides *how* to execute each step cheaply or richly.
 
-$$\tilde{\mathbf{e}}_q = \gamma(\beta) \odot \mathbf{e}_q + \beta(\beta)$$
+The planner is initialized from a pretrained MAS Router checkpoint (transferring task_classifier, collab_mode, num_agents, role_selector weights). The LLM router from MAS is discarded — model/strategy selection is handled by the executor.
 
-where $\gamma, \beta \in \mathbb{R}^{d_q}$ are scale and shift parameters produced by a budget-encoding MLP, with $\gamma$ initialized near identity ($\gamma \approx \mathbf{1}$). This design preserves the embedding dimensionality, enabling direct weight transfer from a pretrained MAS checkpoint without any architectural change to the downstream modules. Under tight budgets, BCFM shifts the embedding toward latent regions associated with simpler topologies; under generous budgets, it enables richer collaboration.
+**Available topologies:** IO (single agent), CoT (chain-of-thought), Chain, Debate, Reflection, FullConnected.
 
-### 2.2 Executor
+### 2.2 Executor (Infrastructure-Aware)
 
 For each role $r_k$, the Executor selects a model and prompting strategy based on a state that fuses task semantics with real-time infrastructure conditions:
 
 $$s_{\text{exec}}^{(k)} = \left[ \mathbf{e}_q \,\|\, \mathbf{e}_{r_k} \,\|\, b_{\text{rem}} \,\|\, \mathbf{z}_{\text{sys}} \right]$$
 
-where $b_{\text{rem}}$ is the remaining budget and $\mathbf{z}_{\text{sys}}$ is the system state vector.
+where:
+- $\mathbf{e}_q \in \mathbb{R}^{384}$ = query embedding (SentenceTransformer)
+- $\mathbf{e}_{r_k} \in \mathbb{R}^{384}$ = role embedding
+- $b_{\text{rem}} \in \mathbb{R}^1$ = remaining budget (seconds)
+- $\mathbf{z}_{\text{sys}} \in \mathbb{R}^{|\mathcal{M}| \times |\Sigma|}$ = predicted latency map
 
-**Action-Conditional Latency Map.** Rather than providing a single latency estimate per model, the system state enumerates the predicted latency for every (model, strategy) pair under current conditions:
+**Action-Conditional Latency Map.** The system state enumerates the predicted latency for every (model, strategy) pair under current conditions:
 
-$$\mathbf{z}_{\text{sys}} = \bigoplus_{m \in \mathcal{M}} \left[ \hat{L}_{m,\sigma_1} \,\|\, \cdots \,\|\, \hat{L}_{m,\sigma_{|\Sigma|}} \,\|\, n_m^{\text{run}} \,\|\, n_m^{\text{wait}} \right]$$
+$$\mathbf{z}_{\text{sys}} = \bigoplus_{m \in \mathcal{M}} \left[ \hat{L}_{m,\sigma_1} \,\|\, \cdots \,\|\, \hat{L}_{m,\sigma_{|\Sigma|}} \right]$$
 
-This gives the executor a complete latency "price list" of all possible actions, enabling real-time quality-latency tradeoffs: routing to underutilized models under high load, and investing in richer reasoning when headroom exists.
+Each predicted latency is computed as:
 
-**Architecture:** A shared MLP backbone with factorized heads for model selection, strategy selection, and value estimation:
+$$\hat{L}_{m,\sigma} = \hat{T}_{m,\sigma}^{\text{TTFT}} + \hat{T}_{m,\sigma}^{\text{TPOT}} \cdot \hat{N}_{m,\sigma}^{\text{out}}$$
+
+This gives the executor a complete latency "price list" of all possible actions.
+
+**Architecture:** A shared 2-layer MLP backbone (with LayerNorm and ReLU) with three factorized heads:
 
 $$\pi_m, \; \pi_\sigma = \text{Softmax}(\text{Head}_m(\mathbf{h})), \; \text{Softmax}(\text{Head}_\sigma(\mathbf{h})), \quad V(s) = \text{Head}_V(\mathbf{h})$$
 
+**Model pool** (5 models on vLLM):
+- DeepSeek-R1-Distill-Qwen-32B (strongest, slowest)
+- Mistral-Small-24B-Instruct-2501
+- Qwen2.5-Coder-14B-Instruct
+- Llama-3.1-8B-Instruct
+- Llama-3.2-3B-Instruct (weakest, fastest)
+
+**Prompt strategies** (3 strategies):
+- Flash: "Go straight to the answer. No reasoning."
+- Concise: "Brief 2-3 key points, then answer."
+- DeepThink: "Reason thoroughly step-by-step, verify result."
+
 ### 2.3 EDF Scheduling at the Serving Layer
 
-Each query's deadline $D_i = t_i^{\text{arr}} + \beta_i$ is propagated to vLLM as an EDF priority. Requests closer to their deadline are served first, reducing tail-latency violations. This creates a cooperative two-level scheduling hierarchy: the CMDP executor decides *which* model to use; EDF scheduling decides *when* the request is processed.
+Each query's deadline $D_i = t_i^{\text{arr}} + \beta_i$ is propagated to vLLM as an EDF priority. Requests closer to their deadline are served first, reducing tail-latency violations.
 
 ---
 
 ## 3. Latency Estimation
 
-The executor's action-conditional latency map is constructed from three neural predictors:
-
-$$\hat{L}_{m,\sigma} = \hat{T}_{m,\sigma}^{\text{TTFT}} + \hat{T}_{m,\sigma}^{\text{TPOT}} \cdot \hat{N}_{m,\sigma}^{\text{out}}$$
+Three neural predictors construct the latency map:
 
 | Predictor | Input Features | Output |
 |-----------|---------------|--------|
-| **TTFT** (time-to-first-token) | Input token count, $n_m^{\text{run}}$, $n_m^{\text{wait}}$ | Prefill + queuing delay |
-| **TPOT** (time-per-output-token) | $n_m^{\text{run}}$, $n_m^{\text{wait}}$ | Decode-phase speed |
-| **Output Length** | Query embedding $\mathbf{e}_q$, strategy embedding $\mathbf{e}_\sigma$, model embedding $\mathbf{e}_m$ | Predicted output tokens |
+| **TTFT** (time-to-first-token) | Prompt token count, $n_m^{\text{run}}$, $n_m^{\text{wait}}$, KV cache %, avg TPOT/TTFT/queue/inference | Prefill + queuing delay |
+| **TPOT** (time-per-output-token) | Same system metrics | Decode-phase speed |
+| **Output Length** | Query embedding $\mathbf{e}_q$, model/role/strategy embeddings | Predicted output tokens |
 
-All predictors use MLPs with Softplus output activations to ensure non-negative predictions. Strategy conditioning is critical because prompting strategies (Flash, Concise, DeepThink) produce dramatically different output lengths, directly determining generation-phase latency.
+All predictors use MLPs with Softplus output activations to ensure non-negative predictions. Strategy conditioning is critical because prompting strategies (Flash, Concise, DeepThink) produce dramatically different output lengths.
 
 ---
 
 ## 4. Training
 
-### 4.1 Reward and Cost
+### 4.1 Two-Level Training
 
-**Quality reward:** Task-specific binary correctness (e.g., $\mathbb{1}[\text{answer correct}]$ for math, $\mathbb{1}[\text{pass all tests}]$ for code).
+Training is separated for the two levels:
 
-**Proportional latency cost:** Normalized by budget to provide continuous gradient signal:
+**Planner training: Quality-first REINFORCE with effort mandate.**
 
-$$C_{\text{plan}} = \frac{C_{\text{workflow}}}{\beta}, \qquad C_{\text{exec}}^{(k)} = \frac{L_k^{\text{observed}}}{b_{\text{rem}}^{(k)}}$$
+$$\text{utility} = \begin{cases} 1.0 - \min\left(0.5,\; 0.3 \cdot \max\left(0, \frac{L}{\beta} - 1.0\right)\right) & \text{if solved} \\ -1.0 + 0.3 \cdot \min\left(1, \frac{L}{\beta}\right) & \text{if wrong} \end{cases}$$
 
-The proportional formulation ensures gradient signal whether under or over budget, unlike a one-sided penalty that produces zero gradient when the constraint is satisfied.
+- Correct answers: utility $\in [0.50, 1.0]$ — always positive, even if over budget
+- Wrong answers: utility $\in [-1.0, -0.7]$ — effort mandate rewards trying harder
+- Advantage: $A_i = \frac{\text{utility}_i - \mu}{\sigma}$ (normalized: mean-subtracted AND divided by std)
+- Loss: $\mathcal{L} = -\log\pi \cdot A + \mathcal{L}_{\text{task}} + 0.001 \cdot \mathcal{L}_{\text{VAE}}$
 
-### 4.2 Lagrangian Relaxation
+**Executor training: Quality-first Actor-Critic with dense shaping.**
 
-We convert the constrained optimization to an unconstrained problem:
+$$\text{reward} = \begin{cases} 1.0 - \min\left(0.5,\; 0.3 \cdot \max\left(0, \frac{L}{\beta} - 1.0\right)\right) & \text{if solved} \\ -1.0 + 0.3 \cdot w_q & \text{if wrong, quality predictor available} \\ -1.0 + 0.3 \cdot \min\left(1, \frac{L}{\beta}\right) & \text{if wrong, fallback to effort} \end{cases}$$
 
-$$\tilde{R} = R_{\text{quality}} - \lambda \cdot \frac{C}{\beta}$$
+- Actor loss: $-\log\pi \cdot \hat{A}$ with normalized advantages (zero mean, unit variance)
+- Critic loss: $\text{MSE}(V(s), \text{reward})$
+- Entropy bonus: $\alpha_H \cdot \mathcal{H}[\pi]$ (coefficient 0.10)
+- Total: $\mathcal{L} = \mathcal{L}_{\text{actor}} + 0.5 \cdot \mathcal{L}_{\text{critic}} - 0.10 \cdot \mathcal{H}$
 
-The Lagrange multiplier $\lambda$ is updated via **signed dual ascent**:
+**Design rationale.** Three key properties:
+1. *Lexicographic dominance*: Correct answers ALWAYS outrank wrong answers (min gap = 1.20).
+2. *Effort mandate*: Wrong answers that used more budget (tried harder) are penalized less than wrong answers that gave up quickly. This prevents collapse to cheap/fast configurations.
+3. *Dense shaping*: The quality predictor provides per-step gradient within wrong answers — "almost correct" gets -0.7, "garbage" gets -1.0 — enabling the executor to learn which (model, strategy) pairs produce better outputs even when the episode fails.
 
-$$\lambda \leftarrow \max\left(0, \; \lambda + \eta_\lambda \left( \frac{\bar{C}_{\text{workflow}}}{\bar{\beta}} - 1 \right) \right)$$
+### 4.2 Budget Randomization
 
-The signed update is essential: when average latency is below budget, $\lambda$ *decreases*, relaxing latency pressure and allowing the policy to explore higher-quality configurations. An unsigned (monotonic) update causes $\lambda$ to grow without bound, collapsing the policy to the cheapest action regardless of quality.
+Each training item samples budget $\beta \sim \text{LogUniform}(5, 300)$ seconds. Items within the same training batch share the same budget (sampled per batch block) so advantage normalization compares items at the same budget level.
 
-### 4.3 Policy Gradient
+The LogUniform range [5, 300] was derived from Phase 1 data: idle workflows take 5-30s, heavy load workflows take 60-290s.
 
-**Planner:** REINFORCE with EMA baseline for variance reduction:
+### 4.3 Training Loop Structure
 
-$$\nabla_{\theta} J_{\text{plan}} = \frac{1}{N} \sum_{i} \nabla_{\theta} \log \pi_{\text{plan}}(a^{(i)} | s^{(i)}) \cdot \left(\tilde{R}^{(i)} - \bar{G}\right) + \alpha_H \nabla \mathcal{H}[\pi_{\text{plan}}]$$
+Each "epoch" consists of 7 arrival rate sweeps: [10, 30, 50, 100, 150, 200, 300] req/min (shuffled). For each sweep:
+1. All training items are processed with Poisson arrivals at the given rate
+2. Every 64 episodes, a training batch update is performed
+3. Checkpoints saved every 50 episodes
 
-**Executor:** Actor-critic with learned value baseline:
+After each full epoch (7 sweeps), validation is run deterministically on held-out data. LR scheduling (ReduceLROnPlateau) and early stopping (patience=5) are based on validation solve rate.
 
-$$\mathcal{L}_{\text{exec}} = \underbrace{-\frac{1}{K}\sum_k \log \pi_{\text{exec}} \cdot \hat{A}^{(k)}}_{\text{actor}} + \underbrace{c_V \cdot \frac{1}{K}\sum_k \left(V(s^{(k)}) - \tilde{R}^{(k)}\right)^2}_{\text{critic}} - \underbrace{\alpha_H \cdot \mathcal{H}[\pi_{\text{exec}}]}_{\text{entropy}}$$
+### 4.4 Quality Predictor (Step-Level Credit Assignment)
 
-Both policies use entropy regularization to maintain exploration and gradient clipping ($\|\nabla\|_2 \leq 1.0$).
-
-### 4.4 Transfer Learning
-
-The planner is initialized from a pretrained MAS checkpoint, transferring existing task-routing knowledge. Because BCFM preserves the embedding dimensionality and initializes near-identity, the planner behaves identically to the baseline at initialization. End-to-end fine-tuning then adapts the combined system to InfraMind's budget-aware reward.
+A trained quality predictor (MLP on query+response embeddings + model/role/strategy features) predicts a judge score $w_q \in [0, 10]$ for each executor step. When the episode outcome is wrong ($\text{is\_solved} = 0$), the quality predictor provides dense shaping: $\text{reward} = -1.0 + 0.3 \cdot (w_q / 10)$. This gives the executor a per-step gradient even within failed episodes — steps with higher predicted quality get less penalty, enabling the policy to learn that better (model, strategy) pairs produce more valuable outputs.
 
 ### 4.5 Workflow Latency
 
@@ -172,15 +156,14 @@ $$C_{\text{workflow}} = \sum_{w=1}^{W} \max_{r_k \in \text{wave}_w} L_k$$
 | Symbol | Description |
 |--------|-------------|
 | $q$, $\mathbf{e}_q$ | Input query, query embedding |
-| $\tilde{\mathbf{e}}_q$ | Budget-conditioned query embedding (BCFM output) |
-| $\mathcal{M}$, $m$ | Model pool, selected model |
-| $\mathcal{T}$, $\tau$ | Topology set, selected topology |
+| $\mathcal{M}$, $m$ | Model pool (5 models), selected model |
+| $\mathcal{T}$, $\tau$ | Topology set (6 topologies), selected topology |
 | $\mathcal{R}$, $r_k$ | Role set, role at position $k$ |
 | $\Sigma$, $\sigma$ | Strategy set $\{\text{Flash, Concise, DeepThink}\}$, selected strategy |
 | $\beta$, $b_{\text{rem}}$ | Total latency budget, remaining budget |
-| $\lambda$ | Lagrange multiplier for latency constraint |
 | $\hat{L}_{m,\sigma}$ | Predicted latency for model $m$ with strategy $\sigma$ |
 | $n_m^{\text{run}}$, $n_m^{\text{wait}}$ | Running / waiting requests on model $m$ |
 | $\pi_{\text{plan}}$, $\pi_{\text{exec}}$ | Planner policy, executor policy |
 | $V(s)$ | Learned value function (executor critic) |
 | $D_i$ | Deadline of query $i$: $t_i^{\text{arr}} + \beta_i$ |
+| $w_q$ | Quality predictor weight for executor credit assignment |

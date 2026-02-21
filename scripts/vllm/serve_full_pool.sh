@@ -280,7 +280,7 @@ start_server_from_json() {
     --tensor-parallel-size "${tensor_parallel_size}" \
     --no-enable-prefix-caching \
     --scheduling-policy priority \
-    --max-num-seqs 32 \
+    --max-num-seqs "${VLLM_MAX_NUM_SEQS:-32}" \
     --swap-space 16 \
     "${extra_flags[@]}" \
     >"${logfile}" 2>&1 &

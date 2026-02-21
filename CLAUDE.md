@@ -101,24 +101,26 @@ Model URLs are auto-configured via `MAR/LLM/llm_profile_full.json`.
 Infrastructure-aware routing using hierarchical CMDP:
 
 - **inframind_router.py**: Hierarchical CMDP implementation
-  - **Planner**: Selects topology + role set at t=0 based on query embedding
-  - **Executor**: Selects (LLM, strategy) per role during runtime based on:
-    - Query embedding
-    - Role embedding
-    - Remaining budget
-    - System metrics (queue depth, cache usage, latency predictions)
+  - **Planner** (quality-driven): MAS-based VAE+GFusion pipeline. Selects topology + role set
+    at t=0 based on query embedding only. No budget awareness — optimizes purely for quality.
+  - **Executor** (infrastructure-aware): Selects (LLM, strategy) per role during runtime based on:
+    - Query embedding + Role embedding
+    - Remaining budget (adapts model/strategy choice to time pressure)
+    - System metrics (queue depth, cache usage, predicted latencies per model×strategy)
+  - Clean separation: planner decides WHAT reasoning structure to use, executor decides HOW to execute it cheaply.
 
 - **metrics_watcher.py**: Real-time vLLM infrastructure monitoring
   - Polls `/metrics` endpoint on all model servers
   - Collects queue depth, KV cache usage, TTFT, ITL, E2E latency
   - Maintains sliding window of historical metrics
-  - Provides state representation for CMDP
+  - Provides state representation for executor
 
-- **training.py**: CMDP training loop with:
-  - Replay buffer for experience storage
-  - Policy gradient optimization
-  - Constraint satisfaction (budget, latency)
-  - Multi-objective reward (accuracy, cost, latency)
+- **training.py**: Two-level training loop:
+  - Planner: REINFORCE with normalized advantages, correct → [0.50, 1.0], wrong → [-1.0, -0.7] (effort mandate)
+  - Executor: Actor-Critic with quality predictor shaping on wrong answers for dense credit assignment
+  - Correct ALWAYS outranks wrong (min gap 1.20). Effort mandate: wrong+tried_hard > wrong+gave_up
+  - LogUniform budget randomization per item for robust budget generalization
+  - Validation, early stopping, best-model checkpointing, LR scheduling
 
 #### **MasRouter/** - Baseline Comparison
 
@@ -191,11 +193,15 @@ Datasets auto-download from HuggingFace or can be placed in subdirectories.
 Unlike baseline MAS Router which only considers task features, INFRAMIND:
 
 1. **Monitors System State**: Real-time vLLM metrics (queue depth, cache usage, latencies)
-2. **Adaptive Orchestration**: Adjusts collaboration patterns based on infrastructure load
-3. **Hierarchical CMDP**: Two-level decision making (Planner + Executor)
-4. **Load-Adaptive Behavior**:
-   - High load → smaller models, concise strategies, reduced collaboration
-   - Low load → larger models, deep reasoning, richer collaboration
+2. **Two-Level Decision Making**:
+   - **Planner** (quality-driven): Selects topology + roles based on query semantics only
+   - **Executor** (infrastructure-aware): Selects (model, strategy) per step based on remaining budget + system metrics
+3. **Load-Adaptive Behavior** (executor-driven):
+   - High load / tight budget → smaller models, Flash strategy
+   - Low load / loose budget → larger models, DeepThink strategy
+   - Topology/roles stay quality-optimal regardless of load
+4. **Quality-First Reward with Effort Mandate**: Correctness is the primary objective. Correct → [+0.50, +1.0] (even if over budget). Wrong → [-1.0, -0.7] with effort mandate (tried harder = less penalty) and quality predictor dense shaping. Min gap 1.20 between worst correct and best wrong. Prevents collapse to cheap/fast configurations.
+5. **LogUniform Budget Randomization**: Training samples budget ~ LogUniform(5, 300) per item for robust generalization across budget regimes.
 
 ### Reasoning Profiles
 
@@ -240,8 +246,9 @@ INFRAMIND monitors:
 ### Modifying CMDP Architecture
 
 Key files to modify:
-- `MAR/InfraMind/inframind_router.py`: State/action spaces, policy networks
-- `MAR/InfraMind/training.py`: Training loop, reward function
+- `MAR/InfraMind/inframind_router.py`: Planner (topology/role selection), executor (model/strategy MLP), reward computation
+- `MAR/InfraMind/trainer.py`: Planner REINFORCE (quality-first), executor Actor-Critic, quality-first reward
+- `MAR/InfraMind/training.py`: Training loop, budget randomization, validation, early stopping
 - `MAR/InfraMind/metrics_watcher.py`: System state representation
 
 ## HPC Workflow
